@@ -6,12 +6,14 @@
 import * as storeHealthService from '../services/storeHealthService.js';
 
 /**
- * GET /api/v1/store-health — health for all stores
- * @param {import('express').Request} req
- * @param {import('express').Response} res
+ * GET /api/v1/store-health — health for all stores. RBAC: STAFF sees only assigned stores.
  */
 export function getAllStoreHealth(req, res) {
-  const data = storeHealthService.getHealthForAllStores();
+  let data = storeHealthService.getHealthForAllStores();
+  if (req.user && req.user.role === 'STAFF' && req.user.storeIds?.length) {
+    const idSet = new Set(req.user.storeIds);
+    data = data.filter((h) => idSet.has(h.storeId));
+  }
   res.json({ data, meta: { count: data.length } });
 }
 

@@ -1,9 +1,12 @@
 /**
  * API v1 router. All internal APIs are versioned under /api/v1.
+ * RBAC: authOptional runs first; protected routes use requireAuth + requireRole.
  */
 
 import { Router } from 'express';
+import { authOptional, requireAuth, requireRole, requireStoreAccess } from '../../middleware/authMiddleware.js';
 import { getHealth } from '../health.js';
+import { login, getStoreOptions } from '../auth.js';
 import { getCities } from './cities.js';
 import { getStores } from './stores.js';
 import { getBrands } from './brands.js';
@@ -30,42 +33,42 @@ import { config } from '../../config/index.js';
 
 const router = Router();
 const prefix = config.api.prefix;
+const adminOnly = [authOptional, requireAuth, requireRole(['ADMIN'])];
+const adminOrStaff = [authOptional, requireAuth, requireRole(['ADMIN', 'STAFF'])];
 
-// Health is part of the versioned API contract
+// Public (no auth)
 router.get(`${prefix}/health`, getHealth);
-router.get(`${prefix}/cities`, getCities);
-router.get(`${prefix}/stores`, getStores);
-router.get(`${prefix}/brands`, getBrands);
-router.get(`${prefix}/skus`, getSkus);
-router.get(`${prefix}/customers`, getCustomers);
-router.get(`${prefix}/orders`, getOrders);
+router.get(`${prefix}/auth/stores`, getStoreOptions);
+router.post(`${prefix}/auth/login`, login);
 
-// Store operational health (Milestone 2)
-router.get(`${prefix}/store-health`, getAllStoreHealth);
-router.get(`${prefix}/stores/:id/health`, getStoreHealthById);
+// Core data + store health + inventory + staff + alerts (ADMIN or STAFF; STAFF filtered in handlers)
+router.get(`${prefix}/cities`, ...adminOrStaff, getCities);
+router.get(`${prefix}/stores`, ...adminOrStaff, getStores);
+router.get(`${prefix}/brands`, ...adminOrStaff, getBrands);
+router.get(`${prefix}/skus`, ...adminOrStaff, getSkus);
+router.get(`${prefix}/customers`, ...adminOrStaff, getCustomers);
+router.get(`${prefix}/orders`, ...adminOrStaff, getOrders);
+router.get(`${prefix}/store-health`, ...adminOrStaff, getAllStoreHealth);
+router.get(`${prefix}/stores/:id/health`, ...adminOrStaff, requireStoreAccess('id'), getStoreHealthById);
+router.get(`${prefix}/inventory`, ...adminOrStaff, getInventory);
+router.get(`${prefix}/inventory-insights`, ...adminOrStaff, getInventoryInsights);
+router.get(`${prefix}/staff`, ...adminOrStaff, getStaff);
+router.get(`${prefix}/workforce-insights`, ...adminOrStaff, getWorkforceInsights);
+router.get(`${prefix}/autopilot/alerts`, ...adminOrStaff, getAlerts);
 
-// Aggregator & commission (Milestone 3)
-router.get(`${prefix}/aggregators`, getAggregators);
-router.get(`${prefix}/aggregator-insights`, getAggregatorInsights);
+// Aggregator & commission (ADMIN only)
+router.get(`${prefix}/aggregators`, ...adminOnly, getAggregators);
+router.get(`${prefix}/aggregator-insights`, ...adminOnly, getAggregatorInsights);
 
-// Inventory & supply chain (Milestone 4)
-router.get(`${prefix}/inventory`, getInventory);
-router.get(`${prefix}/inventory-insights`, getInventoryInsights);
+// Finance (ADMIN only)
+router.get(`${prefix}/finance/summary`, ...adminOnly, getFinanceSummary);
+router.get(`${prefix}/finance/stores`, ...adminOnly, getStoreProfitability);
+router.get(`${prefix}/finance/brands`, ...adminOnly, getBrandProfitability);
+router.get(`${prefix}/finance/skus`, ...adminOnly, getSkuMargins);
+router.get(`${prefix}/finance-insights`, ...adminOnly, getFinanceInsights);
 
-// Staff & workforce (Milestone 5)
-router.get(`${prefix}/staff`, getStaff);
-router.get(`${prefix}/workforce-insights`, getWorkforceInsights);
-
-// Finance & profitability (Milestone 6)
-router.get(`${prefix}/finance/summary`, getFinanceSummary);
-router.get(`${prefix}/finance/stores`, getStoreProfitability);
-router.get(`${prefix}/finance/brands`, getBrandProfitability);
-router.get(`${prefix}/finance/skus`, getSkuMargins);
-router.get(`${prefix}/finance-insights`, getFinanceInsights);
-
-// AI Autopilot & executive control (Milestone 8)
-router.get(`${prefix}/autopilot/status`, getAutopilotStatus);
-router.get(`${prefix}/autopilot/executive-brief`, getExecutiveBrief);
-router.get(`${prefix}/autopilot/alerts`, getAlerts);
+// Autopilot status & brief (ADMIN only)
+router.get(`${prefix}/autopilot/status`, ...adminOnly, getAutopilotStatus);
+router.get(`${prefix}/autopilot/executive-brief`, ...adminOnly, getExecutiveBrief);
 
 export default router;

@@ -30,9 +30,15 @@ export function getExecutiveBrief(req, res) {
 }
 
 /**
- * GET /api/v1/autopilot/alerts
+ * GET /api/v1/autopilot/alerts — RBAC: STAFF sees only alerts for assigned stores.
  */
 export function getAlerts(req, res) {
-  const data = alertOrchestratorService.getActiveAlerts();
+  let data = alertOrchestratorService.getActiveAlerts();
+  if (req.user && req.user.role === 'STAFF' && req.user.storeIds?.length) {
+    const idSet = new Set(req.user.storeIds);
+    data = data.filter((a) =>
+      a.entities?.some((e) => e.type === 'STORE' && idSet.has(e.id))
+    );
+  }
   res.json({ data, meta: { count: data.length } });
 }

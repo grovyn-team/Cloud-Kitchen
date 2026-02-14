@@ -6,21 +6,25 @@ import * as inventoryService from '../services/inventoryService.js';
 import * as inventoryInsightService from '../services/inventoryInsightService.js';
 
 /**
- * GET /api/v1/inventory — store-wise inventory, ingredient stock, days remaining
- * @param {import('express').Request} req
- * @param {import('express').Response} res
+ * GET /api/v1/inventory — store-wise inventory. RBAC: STAFF sees only assigned stores.
  */
 export function getInventory(req, res) {
-  const data = inventoryService.getInventorySnapshot();
+  let data = inventoryService.getInventorySnapshot();
+  if (req.user && req.user.role === 'STAFF' && req.user.storeIds?.length) {
+    const idSet = new Set(req.user.storeIds);
+    data = data.filter((row) => idSet.has(row.storeId));
+  }
   res.json({ data, meta: { count: data.length } });
 }
 
 /**
- * GET /api/v1/inventory-insights — all active inventory-related insights
- * @param {import('express').Request} req
- * @param {import('express').Response} res
+ * GET /api/v1/inventory-insights — RBAC: STAFF sees only insights for assigned stores.
  */
 export function getInventoryInsights(req, res) {
-  const data = inventoryInsightService.getInventoryInsights();
+  let data = inventoryInsightService.getInventoryInsights();
+  if (req.user && req.user.role === 'STAFF' && req.user.storeIds?.length) {
+    const idSet = new Set(req.user.storeIds);
+    data = data.filter((i) => idSet.has(i.storeId));
+  }
   res.json({ data, meta: { count: data.length } });
 }

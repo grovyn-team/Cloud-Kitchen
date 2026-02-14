@@ -6,21 +6,25 @@ import * as staffService from '../services/staffService.js';
 import * as workforceInsightService from '../services/workforceInsightService.js';
 
 /**
- * GET /api/v1/staff — store-wise staff list, roles, experience levels
- * @param {import('express').Request} req
- * @param {import('express').Response} res
+ * GET /api/v1/staff — store-wise staff. RBAC: STAFF sees only assigned stores.
  */
 export function getStaff(req, res) {
-  const data = staffService.getStaffSnapshot();
+  let data = staffService.getStaffSnapshot();
+  if (req.user && req.user.role === 'STAFF' && req.user.storeIds?.length) {
+    const idSet = new Set(req.user.storeIds);
+    data = data.filter((row) => idSet.has(row.storeId));
+  }
   res.json({ data, meta: { count: data.length } });
 }
 
 /**
- * GET /api/v1/workforce-insights — all active workforce-related insights
- * @param {import('express').Request} req
- * @param {import('express').Response} res
+ * GET /api/v1/workforce-insights — RBAC: STAFF sees only insights for assigned stores.
  */
 export function getWorkforceInsights(req, res) {
-  const data = workforceInsightService.getWorkforceInsights();
+  let data = workforceInsightService.getWorkforceInsights();
+  if (req.user && req.user.role === 'STAFF' && req.user.storeIds?.length) {
+    const idSet = new Set(req.user.storeIds);
+    data = data.filter((i) => idSet.has(i.storeId));
+  }
   res.json({ data, meta: { count: data.length } });
 }
