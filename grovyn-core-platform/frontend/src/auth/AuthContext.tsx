@@ -24,7 +24,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const tokenRef = useRef<string | null>(null);
   tokenRef.current = user?.sessionToken ?? null;
   const getToken = useCallback(() => tokenRef.current, []);
-  const api = useMemo(() => createApi(getToken), []);
+  const logoutRef = useRef<() => void>(() => setUser(null));
+  const logout = useCallback(() => setUser(null), []);
+  logoutRef.current = logout;
+  const api = useMemo(
+    () => createApi(getToken, () => logoutRef.current()),
+    []
+  );
 
   const login = useCallback(
     async (payload: LoginPayload): Promise<AuthSession> => {
@@ -41,9 +47,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [api]
   );
 
-  const logout = useCallback(() => {
-    setUser(null);
-  }, []);
 
   const value: AuthContextValue = useMemo(
     () => ({

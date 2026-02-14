@@ -5,7 +5,10 @@ const baseURL =
     ? import.meta.env.VITE_API_BASE_URL
     : '';
 
-export function createApi(getToken: () => string | null): AxiosInstance {
+export function createApi(
+  getToken: () => string | null,
+  onUnauthorized?: () => void
+): AxiosInstance {
   const instance = axios.create({
     baseURL,
     headers: { 'Content-Type': 'application/json' },
@@ -22,8 +25,8 @@ export function createApi(getToken: () => string | null): AxiosInstance {
   instance.interceptors.response.use(
     (r) => r,
     (err) => {
-      if (err.response?.status === 401) {
-        // Consumer can listen or redirect; we don't store tokens or redirect here
+      if (err.response?.status === 401 && onUnauthorized) {
+        onUnauthorized();
       }
       return Promise.reject(err);
     }
@@ -32,11 +35,8 @@ export function createApi(getToken: () => string | null): AxiosInstance {
   return instance;
 }
 
-// API methods — use with getApi() from auth context
 export const apiPaths = {
-  auth: {
-    login: '/api/v1/auth/login',
-  },
+  auth: { login: '/api/v1/auth/login' },
   health: '/api/v1/health',
   stores: '/api/v1/stores',
   storeHealth: '/api/v1/store-health',
@@ -44,6 +44,10 @@ export const apiPaths = {
   executiveBrief: '/api/v1/autopilot/executive-brief',
   alerts: '/api/v1/autopilot/alerts',
   financeSummary: '/api/v1/finance/summary',
+  financeStores: '/api/v1/finance/stores',
+  financeBrands: '/api/v1/finance/brands',
+  financeSkus: '/api/v1/finance/skus',
+  financeInsights: '/api/v1/finance-insights',
   inventory: '/api/v1/inventory',
   inventoryInsights: '/api/v1/inventory-insights',
   staff: '/api/v1/staff',

@@ -6,7 +6,6 @@ import { Login } from '@/pages/Login';
 import { Dashboard } from '@/pages/Dashboard';
 import { Stores } from '@/pages/Stores';
 import { StoreDetail } from '@/pages/StoreDetail';
-import { Store } from '@/pages/Store';
 import { Operations } from '@/pages/Operations';
 import { Finance } from '@/pages/Finance';
 import { Alerts } from '@/pages/Alerts';
@@ -28,15 +27,11 @@ const routes: RouteObject[] = [
       { index: true, element: <Dashboard /> },
       {
         path: 'stores',
-        element: <RequireRole roles={['ADMIN']}><Stores /></RequireRole>,
+        element: <RequireRole roles={['ADMIN', 'STAFF']}><Stores /></RequireRole>,
       },
       {
         path: 'stores/:id',
-        element: <RequireRole roles={['ADMIN']}><StoreDetail /></RequireRole>,
-      },
-      {
-        path: 'store',
-        element: <RequireRole roles={['STAFF']}><Store /></RequireRole>,
+        element: <RequireRole roles={['ADMIN', 'STAFF']}><StoreDetail /></RequireRole>,
       },
       {
         path: 'operations',

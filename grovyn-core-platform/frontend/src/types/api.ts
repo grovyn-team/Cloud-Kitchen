@@ -65,3 +65,48 @@ export interface PaginatedResponse<T> {
   data: T[];
   meta: ApiMeta;
 }
+
+export interface StoreProfitability {
+  storeId: string;
+  profit: number;
+  marginPercent: number;
+  [key: string]: unknown;
+}
+
+export interface BrandProfitability {
+  brandId: string;
+  profit: number;
+  marginPercent?: number;
+  [key: string]: unknown;
+}
+
+export interface SkuMargin {
+  skuId: string;
+  marginPercent: number;
+  profit?: number;
+  [key: string]: unknown;
+}
+
+export interface FinanceInsight {
+  type: string;
+  entityType: 'STORE' | 'BRAND' | 'SKU';
+  entityId: string;
+  message: string;
+  severity: 'info' | 'warning' | 'critical';
+  evaluatedAt: string;
+}
+
+export interface InventoryInsight {
+  type: string;
+  storeId?: string;
+  message?: string;
+  severity?: string;
+  [key: string]: unknown;
+}
+
+export interface WorkforceInsight {
+  type: string;
+  storeId?: string;
+  message?: string;
+  [key: string]: unknown;
+}

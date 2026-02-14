@@ -13,8 +13,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: <LayoutDashboard className="h-5 w-5" />, roles: ['ADMIN', 'STAFF'] },
-  { to: '/stores', label: 'Stores', icon: <Store className="h-5 w-5" />, roles: ['ADMIN'] },
-  { to: '/store', label: 'My Store', icon: <Store className="h-5 w-5" />, roles: ['STAFF'] },
+  { to: '/stores', label: 'Stores', icon: <Store className="h-5 w-5" />, roles: ['ADMIN', 'STAFF'] },
   { to: '/operations', label: 'Operations', icon: <ChefHat className="h-5 w-5" />, roles: ['STAFF'] },
   { to: '/finance', label: 'Finance', icon: <DollarSign className="h-5 w-5" />, roles: ['ADMIN'] },
   { to: '/alerts', label: 'Alerts', icon: <AlertCircle className="h-5 w-5" />, roles: ['ADMIN', 'STAFF'] },

@@ -9,15 +9,30 @@ const apiBase = typeof import.meta.env.VITE_API_BASE_URL === 'string' && import.
   ? import.meta.env.VITE_API_BASE_URL
   : '';
 
+const DEMO_EMAILS: Record<Role, string> = {
+  ADMIN: 'admin@grovyn.in',
+  STAFF: 'stafff@grovyn.in',
+};
+
+const FALLBACK_DEMO_STORES: { id: string; name: string }[] = [
+  { id: 'store-1', name: 'Demo Store — Downtown' },
+  { id: 'store-2', name: 'Demo Store — Mall' },
+  { id: 'store-3', name: 'Demo Store — Central' },
+];
+
 export function Login() {
   const { isAuthenticated, login } = useAuth();
   const location = useLocation();
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(DEMO_EMAILS.ADMIN);
   const [role, setRole] = useState<Role>('ADMIN');
   const [storeId, setStoreId] = useState('');
   const [stores, setStores] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    setEmail(DEMO_EMAILS[role]);
+  }, [role]);
 
   useEffect(() => {
     if (role !== 'STAFF') return;
@@ -26,10 +41,14 @@ export function Login() {
       .then((r) => (r.ok ? r.json() : { data: [] }))
       .then((d) => {
         const list = (d.data ?? []).map((s: { id: string; name: string }) => ({ id: s.id, name: s.name }));
-        setStores(list);
-        if (list.length && !storeId) setStoreId(list[0].id);
+        setStores(list.length > 0 ? list : FALLBACK_DEMO_STORES);
+        if (list.length > 0 && !storeId) setStoreId(list[0].id);
+        else if (list.length === 0 && FALLBACK_DEMO_STORES.length > 0) setStoreId(FALLBACK_DEMO_STORES[0].id);
       })
-      .catch(() => setStores([]));
+      .catch(() => {
+        setStores(FALLBACK_DEMO_STORES);
+        setStoreId(FALLBACK_DEMO_STORES[0]?.id ?? '');
+      });
   }, [role]);
 
   const from = (location.state as { from?: { pathname: string } })?.from?.pathname ?? '/';
@@ -49,9 +68,14 @@ export function Login() {
         ...(role === 'STAFF' && storeId ? { storeId: storeId.trim() } : {}),
       });
     } catch (err: unknown) {
-      const msg = err && typeof err === 'object' && 'response' in err && err.response && typeof (err.response as { data?: { message?: string } }).data?.message === 'string'
-        ? (err.response as { data: { message: string } }).data.message
-        : 'Login failed. Try again.';
+      let msg = 'Login failed. Try again.';
+      if (err && typeof err === 'object' && 'response' in err) {
+        const res = (err as { response?: { status?: number; data?: { message?: string } } }).response;
+        if (res?.data?.message) msg = res.data.message;
+        else if (res?.status === 404 || res?.status === undefined)
+          msg = 'Cannot reach server. Is the backend running? Start it with: cd backend && node src/server.js';
+      } else if (err && typeof err === 'object' && 'message' in err && typeof (err as { message: string }).message === 'string')
+        msg = (err as { message: string }).message;
       setError(msg);
     } finally {
       setLoading(false);
@@ -63,7 +87,7 @@ export function Login() {
       <Card className="w-full max-w-md rounded-2xl shadow-card">
         <CardHeader>
           <CardTitle className="text-xl">Sign in</CardTitle>
-          <p className="text-sm text-muted-foreground">Demo: choose role and store (Staff).</p>
+          <p className="text-sm text-muted-foreground">Admin: admin@grovyn.in · Staff: stafff@grovyn.in (choose a store).</p>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">

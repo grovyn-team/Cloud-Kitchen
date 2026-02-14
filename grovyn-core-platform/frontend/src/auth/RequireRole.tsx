@@ -23,8 +23,9 @@ export function RequireRole({ children, roles, fallback }: RequireRoleProps) {
   if (!allowed(role, roles)) {
     if (fallback) return <>{fallback}</>;
     return (
-      <div className="flex min-h-[40vh] items-center justify-center rounded-xl bg-card p-8 shadow-card">
-        <p className="text-muted-foreground">You don’t have access to this page.</p>
+      <div className="flex min-h-[40vh] flex-col items-center justify-center gap-2 rounded-xl bg-card p-8 shadow-card">
+        <p className="font-medium text-foreground">Access denied.</p>
+        <p className="text-sm text-muted-foreground">You don’t have permission to view this page.</p>
       </div>
     );
   }

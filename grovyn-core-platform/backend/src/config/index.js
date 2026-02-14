@@ -4,7 +4,7 @@
  */
 
 export const config = {
-  port: Number(process.env.PORT) || 3000,
+  port: Number(process.env.PORT) || 3001,
   seed: {
     /** Fixed seed for deterministic synthetic data. Do not change. */
     randomSeed: 42,

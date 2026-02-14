@@ -78,9 +78,32 @@ function main() {
   });
 
   server.on('error', (err) => {
-    console.error('Server error:', err);
+    if (err.code === 'EADDRINUSE') {
+      console.error(`Port ${config.port} is already in use. Either:`);
+      console.error(`  1. Stop the other process using port ${config.port}`);
+      console.error(`  2. Or set PORT to another value (e.g. PORT=3002 npm run dev)`);
+      console.error(`On Windows, find PID: netstat -ano | findstr :${config.port}`);
+    } else {
+      console.error('Server error:', err);
+    }
     process.exit(1);
   });
+
+  function shutdown(signal) {
+    console.log(`${signal} received, closing server...`);
+    server.close((err) => {
+      if (err) {
+        console.error('Error closing server:', err);
+        process.exit(1);
+      }
+      process.exit(0);
+    });
+    // Force exit if graceful close hangs (e.g. open connections)
+    setTimeout(() => process.exit(1), 5000);
+  }
+
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
 main();
