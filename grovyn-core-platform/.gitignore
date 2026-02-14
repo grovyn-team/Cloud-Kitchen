@@ -1,5 +1,7 @@
 node_modules/
 dist/
 *.log
-.env
+.env*
 .env.local
+HOW-TO-RUN.md 
+WALKTHROUGH.md 
