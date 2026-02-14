@@ -52,4 +52,11 @@ export const apiPaths = {
   inventoryInsights: '/api/v1/inventory-insights',
   staff: '/api/v1/staff',
   workforceInsights: '/api/v1/workforce-insights',
+  dashboard: '/api/v1/dashboard',
+  metrics: '/api/v1/metrics',
+  insights: '/api/v1/insights',
+  actions: '/api/v1/actions',
+  simulate: (stores: number) => `/api/v1/simulate?stores=${stores}`,
+  customersSegments: '/api/v1/customers/segments',
+  skusMarginAnalysis: '/api/v1/skus/margin-analysis',
 } as const;

@@ -23,6 +23,7 @@ import * as financeInsightService from './services/financeInsightService.js';
 import * as autopilotService from './services/autopilotService.js';
 import * as executiveBriefService from './services/executiveBriefService.js';
 import * as alertOrchestratorService from './services/alertOrchestratorService.js';
+import * as metricsEngine from './engines/metricsEngine.js';
 
 function main() {
   let seedData;
@@ -50,6 +51,7 @@ function main() {
   workforceInsightService.initWorkforceInsightService();
   financeService.initFinanceService();
   profitEngine.initProfitEngine();
+  metricsEngine.initMetricsEngine();
   console.log('Finance engine initialized');
   financeInsightService.initFinanceInsightService();
   autopilotService.initAutopilotService();
@@ -72,38 +74,47 @@ function main() {
     orders: orders.length,
   });
 
-  const server = app.listen(config.port, () => {
-    console.log(`Core Data Service listening on port ${config.port}`);
-    console.log(`Health: http://localhost:${config.port}/api/v1/health`);
-  });
+  const PREFERRED_FALLBACK_PORT = 3001; // Vite proxy points here
 
-  server.on('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
-      console.error(`Port ${config.port} is already in use. Either:`);
-      console.error(`  1. Stop the other process using port ${config.port}`);
-      console.error(`  2. Or set PORT to another value (e.g. PORT=3002 npm run dev)`);
-      console.error(`On Windows, find PID: netstat -ano | findstr :${config.port}`);
-    } else {
-      console.error('Server error:', err);
-    }
-    process.exit(1);
-  });
-
-  function shutdown(signal) {
-    console.log(`${signal} received, closing server...`);
-    server.close((err) => {
-      if (err) {
-        console.error('Error closing server:', err);
-        process.exit(1);
-      }
-      process.exit(0);
+  function startListening(port) {
+    const server = app.listen(port, () => {
+      console.log(`Core Data Service listening on port ${port}`);
+      console.log(`Health: http://localhost:${port}/api/v1/health`);
     });
-    // Force exit if graceful close hangs (e.g. open connections)
-    setTimeout(() => process.exit(1), 5000);
+
+    server.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        if (port !== PREFERRED_FALLBACK_PORT) {
+          console.warn(`Port ${port} is already in use. Trying ${PREFERRED_FALLBACK_PORT} (frontend proxy expects this)...`);
+          startListening(PREFERRED_FALLBACK_PORT);
+          return;
+        }
+        console.error(`Port ${port} is already in use. Either:`);
+        console.error(`  1. Stop the other process: netstat -ano | findstr :${port}`);
+        console.error(`  2. Then run again, or set PORT to another value and update frontend vite proxy.`);
+      } else {
+        console.error('Server error:', err);
+      }
+      process.exit(1);
+    });
+
+    function shutdown(signal) {
+      console.log(`${signal} received, closing server...`);
+      server.close((err) => {
+        if (err) {
+          console.error('Error closing server:', err);
+          process.exit(1);
+        }
+        process.exit(0);
+      });
+      setTimeout(() => process.exit(1), 5000);
+    }
+
+    process.on('SIGINT', () => shutdown('SIGINT'));
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
   }
 
-  process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  startListening(config.port);
 }
 
 main();

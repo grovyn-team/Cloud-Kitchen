@@ -29,6 +29,15 @@ import {
   getExecutiveBrief,
   getAlerts,
 } from '../autopilot.js';
+import {
+  getMetrics,
+  getInsights,
+  getActions,
+  getDashboard,
+  getSimulate,
+  getCustomerSegments,
+  getSkusMarginAnalysis,
+} from '../intelligence.js';
 import { config } from '../../config/index.js';
 
 const router = Router();
@@ -70,5 +79,14 @@ router.get(`${prefix}/finance-insights`, ...adminOnly, getFinanceInsights);
 // Autopilot status & brief (ADMIN only)
 router.get(`${prefix}/autopilot/status`, ...adminOnly, getAutopilotStatus);
 router.get(`${prefix}/autopilot/executive-brief`, ...adminOnly, getExecutiveBrief);
+
+// AI Intelligence (ADMIN only)
+router.get(`${prefix}/metrics`, ...adminOnly, getMetrics);
+router.get(`${prefix}/insights`, ...adminOnly, getInsights);
+router.get(`${prefix}/actions`, ...adminOnly, getActions);
+router.get(`${prefix}/dashboard`, ...adminOnly, getDashboard);
+router.get(`${prefix}/simulate`, ...adminOnly, getSimulate);
+router.get(`${prefix}/customers/segments`, ...adminOnly, getCustomerSegments);
+router.get(`${prefix}/skus/margin-analysis`, ...adminOnly, getSkusMarginAnalysis);
 
 export default router;

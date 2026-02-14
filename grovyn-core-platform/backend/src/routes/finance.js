@@ -4,6 +4,7 @@
 
 import * as profitEngine from '../services/profitEngine.js';
 import * as financeInsightService from '../services/financeInsightService.js';
+import * as storeService from '../services/storeService.js';
 
 /**
  * GET /api/v1/finance/summary
@@ -17,7 +18,11 @@ export function getFinanceSummary(req, res) {
  * GET /api/v1/finance/stores
  */
 export function getStoreProfitability(req, res) {
-  const data = profitEngine.getStoreProfitability();
+  const rows = profitEngine.getStoreProfitability();
+  const data = rows.map((r) => {
+    const store = storeService.getStoreById(r.storeId);
+    return { ...r, storeName: store?.name ?? r.storeId };
+  });
   res.json({ data, meta: { count: data.length } });
 }
 
