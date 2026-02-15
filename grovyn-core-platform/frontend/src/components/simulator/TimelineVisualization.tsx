@@ -81,7 +81,7 @@ function buildPhases(newStores: number, locations: Location[]): Phase[] {
   ];
 }
 
-export function TimelineVisualization({ newStores, timeline, locations }: TimelineVisualizationProps) {
+export function TimelineVisualization({ newStores, timeline: _timeline, locations }: TimelineVisualizationProps) {
   const phases = buildPhases(newStores, locations);
 
   return (

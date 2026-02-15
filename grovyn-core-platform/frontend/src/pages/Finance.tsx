@@ -53,7 +53,6 @@ export function Finance() {
   const wowMargin = metrics?.wow?.marginDeltaPct ?? 0;
   const wowCommission = metrics?.wow?.commissionDeltaPct ?? 0;
   const commissionTotal = metrics?.last7?.commission ?? 0;
-  const grossTotal = metrics?.last7?.revenue ?? summary.totalGrossRevenue;
 
   return (
     <div className="space-y-6">

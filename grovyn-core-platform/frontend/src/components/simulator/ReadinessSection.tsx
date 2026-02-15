@@ -2,7 +2,7 @@ import { Card, CardContent } from '@/components/ui/card';
 
 interface Criterion {
   name: string;
-  status: 'pass' | 'fail' | 'warning';
+  status: string;
   value: string;
 }
 

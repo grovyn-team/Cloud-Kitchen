@@ -90,7 +90,7 @@ export function Login() {
         <div className="border-b border-border/60 bg-muted/30 px-6 py-5">
           <h1 className="text-2xl font-bold tracking-tight text-foreground">Sign in</h1>
           <p className="mt-1.5 text-sm text-muted-foreground">
-            Admin: admin@grovyn.in · Staff: stafff@grovyn.in (choose a store). Password: grovyn@123
+            Admin: admin@grovyn.in · Staff: stafff@grovyn.in (choose a store). Password: {DEMO_PASSWORD}
           </p>
         </div>
         <CardContent className="px-6 py-6">
