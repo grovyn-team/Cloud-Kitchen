@@ -1,0 +1,11 @@
+# Netlify: build frontend when repo root is Kitchen (grovyn-core-platform is inside)
+[build]
+  base = "grovyn-core-platform/frontend"
+  command = "npm run build"
+  publish = "dist"
+  environment = { NODE_VERSION = "18" }
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

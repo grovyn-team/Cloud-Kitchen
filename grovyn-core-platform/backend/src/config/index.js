@@ -1,10 +1,14 @@
 /**
- * Central configuration for the Core Data Service.
- * Kept minimal for Milestone 1; extend for env-based config later.
+ * Central configuration. All secrets and deployment-specific values from env.
  */
 
+const isProduction = process.env.NODE_ENV === 'production';
+
 export const config = {
+  nodeEnv: process.env.NODE_ENV || 'development',
   port: Number(process.env.PORT) || 3001,
+  /** Comma-separated allowed origins, or * for any. In production set to your Netlify URL. */
+  corsOrigin: process.env.CORS_ORIGIN || (isProduction ? '' : '*'),
   seed: {
     /** Fixed seed for deterministic synthetic data. Do not change. */
     randomSeed: 42,

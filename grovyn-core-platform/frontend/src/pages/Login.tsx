@@ -22,7 +22,7 @@ export function Login() {
   const { isAuthenticated, login } = useAuth();
   const location = useLocation();
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState(DEMO_PASSWORD);
+  const [password, setPassword] = useState('');
   const [role, setRole] = useState<Role>('ADMIN');
   const [storeId, setStoreId] = useState('');
   const [stores, setStores] = useState<{ id: string; name: string }[]>([]);
