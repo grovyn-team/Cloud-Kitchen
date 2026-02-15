@@ -131,7 +131,7 @@ export function getSkusMarginAnalysis(req, res) {
       marginPercent: m.marginPercent ?? 0,
       status: (m.marginPercent ?? 0) >= 25 ? 'OK' : 'ALERT',
       qtySold: 0,
-      commission: 0,
+      commission: m.commission ?? 0,
       net: m.margin,
     };
   });

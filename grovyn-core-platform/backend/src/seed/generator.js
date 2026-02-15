@@ -26,6 +26,14 @@ function dateDaysAgo(rng, daysAgoMax) {
   return d.toISOString();
 }
 
+/** Weighted: 50% in last 14 days (for realistic repeat rate & WoW), 50% in 15–90 days */
+function orderDateWeighted(rng) {
+  if (float(rng, 0, 1, 4) < 0.5) {
+    return dateDaysAgo(rng, 14);
+  }
+  return dateDaysAgo(rng, 90);
+}
+
 /**
  * @param {object} opts
  * @param {number} opts.randomSeed
@@ -131,7 +139,7 @@ export function generateSeedData(opts) {
       customerId: pick(rng, customerIds),
       totalAmount,
       commissionAmount,
-      createdAt: dateDaysAgo(rng, 90),
+      createdAt: orderDateWeighted(rng),
     });
   }
 

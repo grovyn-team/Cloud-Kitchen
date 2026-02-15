@@ -4,6 +4,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { apiPaths } from '@/services/api';
 import type { SimulateResult } from '@/types/api';
 
+/** Indian number format: ₹2,52,681 (commas every 2 digits after first 3) */
+function formatIndianCurrency(n: number): string {
+  const whole = Math.round(n);
+  const s = String(whole);
+  if (s.length <= 3) return s;
+  return s.slice(0, s.length - 3).replace(/\B(?=(\d{2})+(?!\d))/g, ',') + ',' + s.slice(-3);
+}
+
 export function ScaleSimulator() {
   const { api } = useAuth();
   const [stores, setStores] = useState(3);
@@ -56,11 +64,19 @@ export function ScaleSimulator() {
 
       {!loading && data && (
         <>
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Card className="rounded-xl border border-border">
               <CardContent className="p-4">
                 <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Total stores</p>
                 <p className="font-serif text-2xl font-semibold text-foreground">{data.totalStores}</p>
+              </CardContent>
+            </Card>
+            <Card className="rounded-xl border border-border">
+              <CardContent className="p-4">
+                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Growth</p>
+                <p className="font-serif text-2xl font-semibold text-foreground">
+                  {data.currentStores} → {data.totalStores}
+                </p>
               </CardContent>
             </Card>
             <Card className="rounded-xl border border-border">
@@ -96,7 +112,7 @@ export function ScaleSimulator() {
                 </p>
                 <p>
                   <span className="text-muted-foreground">Daily net:</span>{' '}
-                  <span className="font-semibold">₹{data.withoutGrovyn.dailyNet.toLocaleString()}</span>
+                  <span className="font-semibold">₹{formatIndianCurrency(data.withoutGrovyn.dailyNet)}</span>
                 </p>
               </CardContent>
             </Card>
@@ -117,7 +133,7 @@ export function ScaleSimulator() {
                 </p>
                 <p>
                   <span className="text-muted-foreground">Daily net:</span>{' '}
-                  <span className="font-semibold">₹{data.withGrovyn.dailyNet.toLocaleString()}</span>
+                  <span className="font-semibold">₹{formatIndianCurrency(data.withGrovyn.dailyNet)}</span>
                 </p>
               </CardContent>
             </Card>
@@ -129,7 +145,7 @@ export function ScaleSimulator() {
                 Monthly impact protected
               </p>
               <p className="mt-2 font-serif text-4xl font-bold tracking-tight text-foreground">
-                ₹{data.monthlySavings.toLocaleString()}/month
+                ₹{formatIndianCurrency(data.monthlySavings)}/month
               </p>
             </CardContent>
           </Card>

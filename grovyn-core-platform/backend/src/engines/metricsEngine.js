@@ -170,14 +170,21 @@ export function getFullMetrics() {
   const yesterday = aggregateForRange(yesterdayKey, yesterdayKey);
   const last7 = aggregateForRange(day7Start, today);
   const last14 = aggregateForRange(day14Start, today);
+  // WoW = prior 7 days (days -14..-8) vs current 7 days (days -7..-1) so R2/R3 fire correctly
+  const prior7Start = addDays(today, -14);
+  const prior7End = addDays(today, -8);
+  const current7Start = addDays(today, -7);
+  const current7End = addDays(today, -1);
+  const prior7 = aggregateForRange(prior7Start, prior7End);
+  const current7 = aggregateForRange(current7Start, current7End);
 
-  const wowMarginDelta = last14.netMarginPct !== 0 ? Number((last7.netMarginPct - last14.netMarginPct).toFixed(2)) : 0;
-  const wowRepeatDelta = Number((last7.repeatRate - last14.repeatRate).toFixed(2));
-  const wowCommissionDelta = last14.commission > 0
-    ? Number((((last7.commission / last7.revenue) - (last14.commission / last14.revenue)) * 100).toFixed(2))
-    : 0;
-  const wowRevenueDeltaPct = last14.revenue > 0
-    ? Number((((last7.revenue - last14.revenue) / last14.revenue) * 100).toFixed(2))
+  const wowMarginDelta = Number((current7.netMarginPct - prior7.netMarginPct).toFixed(2));
+  const wowRepeatDelta = Number((current7.repeatRate - prior7.repeatRate).toFixed(2));
+  const prior7CommissionPct = prior7.revenue > 0 ? (prior7.commission / prior7.revenue) * 100 : 0;
+  const current7CommissionPct = current7.revenue > 0 ? (current7.commission / current7.revenue) * 100 : 0;
+  const wowCommissionDelta = Number((current7CommissionPct - prior7CommissionPct).toFixed(2));
+  const wowRevenueDeltaPct = prior7.revenue > 0
+    ? Number((((current7.revenue - prior7.revenue) / prior7.revenue) * 100).toFixed(2))
     : 0;
 
   const dailyTrend = getDailyTrend();

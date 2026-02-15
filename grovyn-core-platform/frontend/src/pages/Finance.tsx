@@ -149,6 +149,7 @@ export function Finance() {
                     <th className="pb-2 pr-4 font-medium">Name</th>
                     <th className="pb-2 pr-4 font-medium">Revenue</th>
                     <th className="pb-2 pr-4 font-medium">Cost</th>
+                    <th className="pb-2 pr-4 font-medium">Commission</th>
                     <th className="pb-2 pr-4 font-medium">Margin</th>
                     <th className="pb-2 pr-4 font-medium">Margin %</th>
                     <th className="pb-2 font-medium">Status</th>
@@ -160,6 +161,7 @@ export function Finance() {
                       <td className="py-2 pr-4 font-medium text-foreground">{row.name}</td>
                       <td className="py-2 pr-4">₹{row.revenue.toLocaleString()}</td>
                       <td className="py-2 pr-4">₹{row.cost.toLocaleString()}</td>
+                      <td className="py-2 pr-4">₹{(row.commission ?? 0).toLocaleString()}</td>
                       <td className="py-2 pr-4">₹{row.margin.toLocaleString()}</td>
                       <td className="py-2 pr-4">{row.marginPercent.toFixed(1)}%</td>
                       <td className="py-2">

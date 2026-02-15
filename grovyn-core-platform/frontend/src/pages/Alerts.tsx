@@ -24,6 +24,17 @@ export function Alerts() {
   }, [api]);
 
   const storeNames = new Map(stores.map((s) => [s.id, s.name]));
+
+  /** Replace raw store IDs (e.g. store_be1f6f21) in text with human-readable store names */
+  function messageWithStoreNames(text: string): string {
+    if (!text) return text;
+    let out = text;
+    storeNames.forEach((name, id) => {
+      out = out.replace(new RegExp(id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), name);
+    });
+    return out;
+  }
+
   const critical = alerts.filter((a) => a.severity === 'critical');
   const warning = alerts.filter((a) => a.severity === 'warning');
   const info = alerts.filter((a) => a.severity === 'info');
@@ -88,7 +99,7 @@ export function Alerts() {
                             Store: {storeLabel(a)}
                           </p>
                         )}
-                        <p className="text-sm font-medium text-foreground">{a.message}</p>
+                        <p className="text-sm font-medium text-foreground">{messageWithStoreNames(a.message)}</p>
                         {a.evaluatedAt && (
                           <p className="mt-0.5 text-xs text-muted-foreground">
                             {a.evaluatedAt.replace('T', ' ').slice(0, 16)}
@@ -121,7 +132,7 @@ export function Alerts() {
                             Store: {storeLabel(a)}
                           </p>
                         )}
-                        <p className="text-sm text-foreground">{a.message}</p>
+                        <p className="text-sm text-foreground">{messageWithStoreNames(a.message)}</p>
                         {a.evaluatedAt && (
                           <p className="mt-0.5 text-xs text-muted-foreground">
                             {a.evaluatedAt.replace('T', ' ').slice(0, 16)}
@@ -151,7 +162,7 @@ export function Alerts() {
                             Store: {storeLabel(a)}
                           </p>
                         )}
-                        <p className="text-sm text-foreground">{a.message}</p>
+                        <p className="text-sm text-foreground">{messageWithStoreNames(a.message)}</p>
                       </div>
                     </li>
                   ))}

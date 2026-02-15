@@ -126,10 +126,10 @@ export function Dashboard() {
               </div>
               <div className="space-y-1">
                 <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Repeat Rate
+                  Repeat Rate (7d)
                 </p>
                 <p className="font-serif text-2xl font-semibold text-foreground">
-                  {(m.yesterday?.repeatRate ?? 0).toFixed(1)}%
+                  {(m.last7?.repeatRate ?? m.yesterday?.repeatRate ?? 0).toFixed(1)}%
                 </p>
                 <Sparkline data={repeatTrend} />
                 <p className="text-xs"><WowDelta value={m.wow?.repeatDeltaPct ?? 0} /></p>
