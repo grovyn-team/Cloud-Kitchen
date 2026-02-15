@@ -7,7 +7,7 @@ import type { Role } from '@/types/api';
 
 const apiBase =
   typeof import.meta.env.VITE_API_BASE_URL === 'string' && import.meta.env.VITE_API_BASE_URL
-    ? import.meta.env.VITE_API_BASE_URL
+    ? import.meta.env.VITE_API_BASE_URL.replace(/\/+$/, '')
     : '';
 
 const DEMO_PASSWORD = 'grovyn@123';
@@ -68,9 +68,11 @@ export function Login() {
       if (err && typeof err === 'object' && 'response' in err) {
         const res = (err as { response?: { status?: number; data?: { message?: string } } }).response;
         if (res?.data?.message) msg = res.data.message;
-        else if (res?.status === 404 || res?.status === undefined)
+        else if (res?.status === 503 || res?.status === 0 || res === undefined)
           msg =
-            'Cannot reach server. Is the backend running? Start it with: cd backend && node src/server.js';
+            'Backend not reachable. Start the backend locally (npm run dev in grovyn-core-platform/backend) or set VITE_API_BASE_URL in .env to your deployed API and restart the dev server.';
+        else if (res?.status === 404)
+          msg = 'Cannot reach server. Is the backend running?';
       } else if (
         err &&
         typeof err === 'object' &&
