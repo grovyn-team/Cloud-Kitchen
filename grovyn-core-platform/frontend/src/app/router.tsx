@@ -9,6 +9,8 @@ import { StoreDetail } from '@/pages/StoreDetail';
 import { Operations } from '@/pages/Operations';
 import { Finance } from '@/pages/Finance';
 import { Alerts } from '@/pages/Alerts';
+import { RepeatEngine } from '@/pages/RepeatEngine';
+import { ScaleSimulator } from '@/pages/ScaleSimulator';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   return <RequireRole roles={['ADMIN', 'STAFF']}>{children}</RequireRole>;
@@ -40,6 +42,14 @@ const routes: RouteObject[] = [
       {
         path: 'finance',
         element: <RequireRole roles={['ADMIN']}><Finance /></RequireRole>,
+      },
+      {
+        path: 'repeat',
+        element: <RequireRole roles={['ADMIN']}><RepeatEngine /></RequireRole>,
+      },
+      {
+        path: 'simulator',
+        element: <RequireRole roles={['ADMIN']}><ScaleSimulator /></RequireRole>,
       },
       {
         path: 'alerts',

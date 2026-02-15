@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Store, DollarSign, AlertCircle, ChefHat } from 'lucide-react';
+import { LayoutDashboard, Store, DollarSign, AlertCircle, ChefHat, Repeat, TrendingUp } from 'lucide-react';
 import type { Role } from '@/types/api';
 import { cn } from '@/lib/utils';
 
@@ -16,6 +16,8 @@ const navItems: NavItem[] = [
   { to: '/stores', label: 'Stores', icon: <Store className="h-5 w-5" />, roles: ['ADMIN', 'STAFF'] },
   { to: '/operations', label: 'Operations', icon: <ChefHat className="h-5 w-5" />, roles: ['STAFF'] },
   { to: '/finance', label: 'Finance', icon: <DollarSign className="h-5 w-5" />, roles: ['ADMIN'] },
+  { to: '/repeat', label: 'AI Repeat Engine', icon: <Repeat className="h-5 w-5" />, roles: ['ADMIN'] },
+  { to: '/simulator', label: 'Scale Simulator', icon: <TrendingUp className="h-5 w-5" />, roles: ['ADMIN'] },
   { to: '/alerts', label: 'Alerts', icon: <AlertCircle className="h-5 w-5" />, roles: ['ADMIN', 'STAFF'] },
 ];
 

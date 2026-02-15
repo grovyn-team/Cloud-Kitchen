@@ -1,7 +1,7 @@
 {
-  "name": "grovyn-core-platform-backend",
+  "name": "grovyn-autopilot-backend",
   "version": "1.0.0",
-  "description": "Core Data Service for Grovyn Cloud Kitchen Platform",
+  "description": "Backend for Grovyn Autopilot — Cloud Kitchen Operations Intelligence",
   "main": "src/server.js",
   "type": "module",
   "scripts": {

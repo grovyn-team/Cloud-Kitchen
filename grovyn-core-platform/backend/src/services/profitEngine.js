@@ -161,6 +161,7 @@ function runSkuMargins() {
   const financialsByOrderId = new Map(financeService.getOrderFinancials().map((f) => [f.orderId, f]));
   const skuRevenue = new Map();
   const skuIngredientCost = new Map();
+  const skuCommission = new Map();
 
   for (let i = 0; i < sorted.length; i++) {
     const order = sorted[i];
@@ -171,6 +172,7 @@ function runSkuMargins() {
     const sku = brandSkus[i % brandSkus.length];
     const skuId = sku.id;
     skuRevenue.set(skuId, (skuRevenue.get(skuId) ?? 0) + f.grossRevenue);
+    skuCommission.set(skuId, (skuCommission.get(skuId) ?? 0) + f.commissionCost);
     const bom = inventoryService.getBOM(skuId);
     let cost = 0;
     for (const { ingredientId, quantityPerOrder } of bom) {
@@ -180,16 +182,18 @@ function runSkuMargins() {
   }
 
   skuMargins = [];
-  const allSkuIds = new Set([...skuRevenue.keys(), ...skuIngredientCost.keys()]);
+  const allSkuIds = new Set([...skuRevenue.keys(), ...skuIngredientCost.keys(), ...skuCommission.keys()]);
   for (const skuId of allSkuIds) {
     const revenue = Number((skuRevenue.get(skuId) ?? 0).toFixed(2));
     const ingredientCost = Number((skuIngredientCost.get(skuId) ?? 0).toFixed(2));
-    const margin = Number((revenue - ingredientCost).toFixed(2));
+    const commission = Number((skuCommission.get(skuId) ?? 0).toFixed(2));
+    const margin = Number((revenue - ingredientCost - commission).toFixed(2));
     const marginPercent = revenue > 0 ? Number(((margin / revenue) * 100).toFixed(2)) : 0;
     skuMargins.push({
       skuId,
       revenue,
       ingredientCost,
+      commission,
       margin,
       marginPercent,
     });

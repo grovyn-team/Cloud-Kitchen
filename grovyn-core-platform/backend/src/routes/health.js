@@ -9,7 +9,7 @@
 export function getHealth(req, res) {
   res.status(200).json({
     status: 'ok',
-    service: 'grovyn-core-data-service',
+    service: 'grovyn-autopilot',
     timestamp: new Date().toISOString(),
     version: '1.0.0',
   });
