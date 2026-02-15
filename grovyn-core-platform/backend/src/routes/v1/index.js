@@ -35,6 +35,7 @@ import {
   getActions,
   getDashboard,
   getSimulate,
+  getExpansionSimulate,
   getCustomerSegments,
   getSkusMarginAnalysis,
 } from '../intelligence.js';
@@ -86,6 +87,7 @@ router.get(`${prefix}/insights`, ...adminOnly, getInsights);
 router.get(`${prefix}/actions`, ...adminOnly, getActions);
 router.get(`${prefix}/dashboard`, ...adminOnly, getDashboard);
 router.get(`${prefix}/simulate`, ...adminOnly, getSimulate);
+router.get(`${prefix}/expansion/simulate`, ...adminOnly, getExpansionSimulate);
 router.get(`${prefix}/customers/segments`, ...adminOnly, getCustomerSegments);
 router.get(`${prefix}/skus/margin-analysis`, ...adminOnly, getSkusMarginAnalysis);
 

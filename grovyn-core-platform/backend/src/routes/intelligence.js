@@ -1,5 +1,5 @@
 /**
- * AI Intelligence APIs: metrics, insights, actions, dashboard, simulate, customer segments, SKU margin.
+ * AI Intelligence APIs: metrics, insights, actions, dashboard, simulate, customer segments, SKU margin, expansion.
  */
 
 import * as metricsEngine from '../engines/metricsEngine.js';
@@ -10,6 +10,9 @@ import * as commissionService from '../services/commissionService.js';
 import * as customerService from '../services/customerService.js';
 import * as profitEngine from '../services/profitEngine.js';
 import * as skuService from '../services/skuService.js';
+import * as storeService from '../services/storeService.js';
+import * as alertOrchestratorService from '../services/alertOrchestratorService.js';
+import * as expansionPlanner from '../services/expansionPlanner.js';
 
 export function getMetrics(req, res) {
   const data = metricsEngine.getFullMetrics();
@@ -38,6 +41,72 @@ export function getSimulate(req, res) {
   const stores = Number(req.query.stores) || 3;
   const data = simulatorEngine.simulate(stores);
   res.json(data);
+}
+
+/**
+ * GET /api/v1/expansion/simulate — strategic expansion plan: readiness, locations, scenarios, financials, Grovyn Autopilot impact, risks.
+ */
+export function getExpansionSimulate(req, res) {
+  try {
+    const { newStores, scenario = 'moderate' } = req.query;
+    const stores = storeService.getAllStores();
+    const metrics = metricsEngine.getFullMetrics();
+    const alerts = alertOrchestratorService.getActiveAlerts();
+
+    const readiness = expansionPlanner.calculateReadinessScore(stores, metrics, alerts);
+    const rankedLocations = expansionPlanner.rankLocations(stores.length, expansionPlanner.expansionLocations);
+    const scenarios = expansionPlanner.generateScenarios(rankedLocations);
+
+    const selectedScenarioKey = scenario in scenarios ? scenario : 'moderate';
+    const selectedScenario = scenarios[selectedScenarioKey];
+    const customCount = Math.max(1, Math.min(10, Number(newStores) || 0));
+    const useCustom = newStores && customCount >= 1;
+    const scenarioToUse = useCustom
+      ? { name: 'Custom', newStores: customCount, timeline: Math.min(12, customCount * 3), locations: rankedLocations.slice(0, customCount), description: 'Custom store count' }
+      : selectedScenario;
+
+    const storeCount = stores.length;
+    const avgMonthlyRevenuePerStore =
+      storeCount > 0 && metrics?.last7?.revenue
+        ? (metrics.last7.revenue / storeCount / 7) * 30
+        : 450000;
+
+    const financials = expansionPlanner.projectFinancials(
+      scenarioToUse.newStores,
+      { avgMonthlyRevenue: avgMonthlyRevenuePerStore },
+      scenarioToUse.locations
+    );
+
+    const grovynImpact = expansionPlanner.calculateGrovynImpact(
+      scenarioToUse.newStores,
+      financials.year1Revenue
+    );
+
+    const currentMetricsForRisk = {
+      avgMargin: metrics?.last7?.netMarginPct ?? 15,
+    };
+    const risks = expansionPlanner.assessRisks(
+      scenarioToUse.newStores,
+      scenarioToUse.locations,
+      currentMetricsForRisk
+    );
+
+    res.json({
+      currentStores: storeCount,
+      readiness,
+      topLocations: rankedLocations.slice(0, 10),
+      scenarios,
+      selectedScenario: {
+        ...scenarioToUse,
+        financials,
+        grovynImpact,
+        risks,
+      },
+    });
+  } catch (err) {
+    console.error('Expansion simulation error:', err);
+    res.status(500).json({ error: 'Simulation failed' });
+  }
 }
 
 /**

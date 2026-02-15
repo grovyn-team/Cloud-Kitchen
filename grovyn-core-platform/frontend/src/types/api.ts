@@ -9,6 +9,7 @@ export interface AuthSession {
 
 export interface LoginPayload {
   email: string;
+  password: string;
   role: Role;
   storeId?: string;
 }

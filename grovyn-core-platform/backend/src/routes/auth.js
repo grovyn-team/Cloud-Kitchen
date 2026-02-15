@@ -14,15 +14,24 @@ export function getStoreOptions(req, res) {
   res.json({ data: stores, meta: { count: stores.length } });
 }
 
+/** Dummy password for demo; replace with real auth (e.g. bcrypt) in production */
+const DEMO_PASSWORD = 'grovyn@123';
+
 /**
  * POST /api/v1/auth/login
- * Body: { email, role: "ADMIN"|"STAFF", storeId?: string } — storeId required for STAFF.
+ * Body: { email, password, role: "ADMIN"|"STAFF", storeId?: string } — storeId required for STAFF.
  * Returns: { userId, role, storeIds, sessionToken }
  */
 export function login(req, res) {
-  const { email, role, storeId } = req.body || {};
+  const { email, password, role, storeId } = req.body || {};
   if (!email || typeof email !== 'string' || email.trim() === '') {
     return res.status(400).json({ error: 'Bad request', message: 'Email is required' });
+  }
+  if (!password || typeof password !== 'string') {
+    return res.status(400).json({ error: 'Bad request', message: 'Password is required' });
+  }
+  if (password !== DEMO_PASSWORD) {
+    return res.status(401).json({ error: 'Unauthorized', message: 'Invalid email or password' });
   }
   if (!role || !['ADMIN', 'STAFF'].includes(role)) {
     return res.status(400).json({ error: 'Bad request', message: 'Role must be ADMIN or STAFF' });

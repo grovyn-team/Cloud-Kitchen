@@ -1,10 +1,65 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/auth/AuthContext';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
+import { ReadinessSection } from '@/components/simulator/ReadinessSection';
+import { LocationSelector } from '@/components/simulator/LocationSelector';
+import { ScenarioCards } from '@/components/simulator/ScenarioCards';
+import { FinancialBreakdown } from '@/components/simulator/FinancialBreakdown';
+import { GrovynImpactCards } from '@/components/simulator/GrovynImpactCards';
+import { RiskGauge } from '@/components/simulator/RiskGauge';
+import { TimelineVisualization } from '@/components/simulator/TimelineVisualization';
 import { apiPaths } from '@/services/api';
-import type { SimulateResult } from '@/types/api';
 
-/** Indian number format: ₹2,52,681 (commas every 2 digits after first 3) */
+interface ExpansionData {
+  currentStores: number;
+  readiness: {
+    total: number;
+    criteria: Array<{ name: string; status: string; value: string }>;
+    blockers: string[];
+    warnings: string[];
+    recommendation: string;
+  };
+  topLocations: Array<{
+    id: string;
+    city: string;
+    zone: string;
+    demandDensity: number;
+    competitorCount: number;
+    cannibalizationRisk: number;
+    avgRentPerSqFt: number;
+    opportunityScore: number;
+    demandScore?: number;
+    competitionScore?: number;
+    cannibalizationScore?: number;
+  }>;
+  scenarios: Record<string, { name: string; newStores: number; timeline: number; locations: unknown[]; description: string }>;
+  selectedScenario: {
+    name: string;
+    newStores: number;
+    timeline: number;
+    locations: unknown[];
+    financials: {
+      setupCosts: { equipment: number; renovation: number; deposit: number; inventory: number; total: number };
+      totalSetupCost: number;
+      monthlyProjections: Array<{
+        month: number;
+        revenue: number;
+        cogs: number;
+        commission: number;
+        fixedCosts: number;
+        netProfit: number;
+        cumulative: number;
+        rampMultiplier: number;
+      }>;
+      breakevenMonth: number | string;
+      year1Revenue: number;
+      year1NetProfit: number;
+    };
+    grovynImpact: Array<{ feature: string; description: string; calculation: string; monthlyValue: number; annualValue: number }>;
+    risks: { overall: number; breakdown: Record<string, number> };
+  };
+}
+
 function formatIndianCurrency(n: number): string {
   const whole = Math.round(n);
   const s = String(whole);
@@ -12,148 +67,135 @@ function formatIndianCurrency(n: number): string {
   return s.slice(0, s.length - 3).replace(/\B(?=(\d{2})+(?!\d))/g, ',') + ',' + s.slice(-3);
 }
 
+function MetricCard({ label, value, change }: { label: string; value: string; change?: string }) {
+  return (
+    <Card className="rounded-xl border border-border">
+      <CardContent className="p-4">
+        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</div>
+        <div className="font-serif text-2xl font-semibold text-foreground">{value}</div>
+        {change != null && <div className="mt-1 text-sm text-[#22c55e]">{change}</div>}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function ScaleSimulator() {
   const { api } = useAuth();
-  const [stores, setStores] = useState(3);
-  const [data, setData] = useState<SimulateResult | null>(null);
+  const [data, setData] = useState<ExpansionData | null>(null);
+  const [selectedScenario, setSelectedScenario] = useState('moderate');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
   useEffect(() => {
     setLoading(true);
+    setError(false);
     api
-      .get<SimulateResult>(apiPaths.simulate(stores))
-      .then((r) => setData(r.data))
-      .catch(() => setData(null))
+      .get<ExpansionData>(apiPaths.expansionSimulate(selectedScenario))
+      .then((r) => {
+        setData(r.data);
+      })
+      .catch(() => {
+        setData(null);
+        setError(true);
+      })
       .finally(() => setLoading(false));
-  }, [api, stores]);
+  }, [api, selectedScenario]);
+
+  if (loading) {
+    return (
+      <div className="flex min-h-[200px] items-center justify-center">
+        <p className="text-muted-foreground">Loading expansion plan…</p>
+      </div>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <div className="space-y-6">
+        <h2 className="text-xl font-semibold text-foreground">Scale Simulator</h2>
+        <p className="text-muted-foreground">Unable to load expansion simulation. Please try again.</p>
+      </div>
+    );
+  }
+
+  const isReady = data.readiness.recommendation === 'ready';
+  const needsCaution = data.readiness.recommendation === 'caution';
+  const sel = data.selectedScenario;
+  const fin = sel.financials;
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center gap-2">
-        <h2 className="text-xl font-semibold text-foreground">Scale Simulator</h2>
-        <span className="rounded bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground">
-          GET /api/simulate?stores=N
-        </span>
+    <div className="max-w-7xl space-y-8">
+      <div>
+        <h1 className="text-3xl font-bold text-foreground">Scale Simulator</h1>
+        <p className="mt-2 text-muted-foreground">Strategic expansion planning for your cloud kitchen network</p>
       </div>
 
-      <Card className="rounded-xl border border-border">
-        <CardHeader>
-          <CardTitle className="text-base">New stores to add</CardTitle>
-          <p className="text-sm text-muted-foreground">Slide to see impact with vs without Grovyn AI</p>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center gap-4">
-            <input
-              type="range"
-              min={1}
-              max={10}
-              value={stores}
-              onChange={(e) => setStores(Number(e.target.value))}
-              className="w-48 accent-primary"
-            />
-            <span className="font-mono font-semibold text-foreground">{stores}</span>
-          </div>
-        </CardContent>
-      </Card>
+      <ReadinessSection readiness={data.readiness} currentStores={data.currentStores} />
 
-      {loading && (
-        <div className="flex min-h-[120px] items-center justify-center">
-          <p className="text-muted-foreground">Loading…</p>
-        </div>
+      {!isReady && !needsCaution && (
+        <Card className="rounded-xl border-2 border-[#ef4444]/30 bg-[#ef4444]/5">
+          <CardContent className="p-8 text-center">
+            <h2 className="mb-4 text-2xl font-bold text-[#ef4444]">Not ready to scale yet</h2>
+            <p className="mb-6 text-[#ef4444]">Address these before expanding:</p>
+            <ul className="mx-auto max-w-md space-y-2 text-left">
+              {data.readiness.blockers.map((blocker, i) => (
+                <li key={i} className="flex items-start">
+                  <span className="mr-2 text-[#ef4444]">✗</span>
+                  <span>{blocker}</span>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
       )}
 
-      {!loading && data && (
+      {(isReady || needsCaution) && (
         <>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <Card className="rounded-xl border border-border">
-              <CardContent className="p-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Total stores</p>
-                <p className="font-serif text-2xl font-semibold text-foreground">{data.totalStores}</p>
-              </CardContent>
-            </Card>
-            <Card className="rounded-xl border border-border">
-              <CardContent className="p-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Growth</p>
-                <p className="font-serif text-2xl font-semibold text-foreground">
-                  {data.currentStores} → {data.totalStores}
-                </p>
-              </CardContent>
-            </Card>
-            <Card className="rounded-xl border border-border">
-              <CardContent className="p-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Projected MAU</p>
-                <p className="font-serif text-2xl font-semibold text-foreground">{data.projectedMAU.toLocaleString()}</p>
-              </CardContent>
-            </Card>
-            <Card className="rounded-xl border border-border">
-              <CardContent className="p-4">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Projected daily revenue</p>
-                <p className="font-serif text-2xl font-semibold text-foreground">
-                  ₹{data.projectedDailyRevenue.toLocaleString()}
-                </p>
-              </CardContent>
-            </Card>
-          </div>
+          <LocationSelector locations={data.topLocations} currentStores={data.currentStores} />
 
-          <div className="grid gap-6 lg:grid-cols-2">
-            <Card className="overflow-hidden rounded-xl border-2 border-[#ef4444]/30 bg-[#ef4444]/5">
-              <CardHeader>
-                <CardTitle className="text-base text-foreground">Without Grovyn AI</CardTitle>
-                <p className="text-sm text-muted-foreground">Margin erodes · Repeat drops</p>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                <p>
-                  <span className="text-muted-foreground">Margin:</span>{' '}
-                  <span className="font-semibold text-[#ef4444]">{data.withoutGrovyn.marginPercent.toFixed(1)}%</span>
-                </p>
-                <p>
-                  <span className="text-muted-foreground">Repeat:</span>{' '}
-                  <span className="font-semibold">{data.withoutGrovyn.repeatPercent.toFixed(1)}%</span>
-                </p>
-                <p>
-                  <span className="text-muted-foreground">Daily net:</span>{' '}
-                  <span className="font-semibold">₹{formatIndianCurrency(data.withoutGrovyn.dailyNet)}</span>
-                </p>
-              </CardContent>
-            </Card>
+          <ScenarioCards scenarios={data.scenarios} selected={selectedScenario} onSelect={setSelectedScenario} />
 
-            <Card className="overflow-hidden rounded-xl border-2 border-[#eab308]/40 bg-gradient-to-br from-[#22c55e]/10 to-transparent">
-              <CardHeader>
-                <CardTitle className="text-base text-foreground">With Grovyn AI</CardTitle>
-                <p className="text-sm text-muted-foreground">Margin improved · Repeat improved</p>
-              </CardHeader>
-              <CardContent className="space-y-2 text-sm">
-                <p>
-                  <span className="text-muted-foreground">Margin:</span>{' '}
-                  <span className="font-semibold text-[#22c55e]">{data.withGrovyn.marginPercent.toFixed(1)}%</span>
-                </p>
-                <p>
-                  <span className="text-muted-foreground">Repeat:</span>{' '}
-                  <span className="font-semibold text-[#22c55e]">{data.withGrovyn.repeatPercent.toFixed(1)}%</span>
-                </p>
-                <p>
-                  <span className="text-muted-foreground">Daily net:</span>{' '}
-                  <span className="font-semibold">₹{formatIndianCurrency(data.withGrovyn.dailyNet)}</span>
-                </p>
-              </CardContent>
-            </Card>
-          </div>
+          <Card className="rounded-xl border border-border">
+            <CardContent className="space-y-8 p-6">
+              <h2 className="text-2xl font-semibold text-foreground">Expansion plan details</h2>
 
-          <Card className="overflow-hidden rounded-xl border-2 border-[#eab308]/50 bg-gradient-to-r from-[#eab308]/20 to-[#22c55e]/20">
-            <CardContent className="flex flex-col items-center justify-center py-8 text-center">
-              <p className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
-                Monthly impact protected
-              </p>
-              <p className="mt-2 font-serif text-4xl font-bold tracking-tight text-foreground">
-                ₹{formatIndianCurrency(data.monthlySavings)}/month
-              </p>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <MetricCard
+                  label="Total stores"
+                  value={String(data.currentStores + sel.newStores)}
+                  change={`+${sel.newStores}`}
+                />
+                <MetricCard label="Year 1 revenue" value={`₹${formatIndianCurrency(fin.year1Revenue)}`} />
+                <MetricCard label="Setup investment" value={`₹${formatIndianCurrency(fin.totalSetupCost)}`} />
+                <MetricCard label="Breakeven" value={typeof fin.breakevenMonth === 'number' ? `Month ${fin.breakevenMonth}` : String(fin.breakevenMonth)} />
+              </div>
+
+              <div>
+                <h3 className="mb-4 text-xl font-semibold text-foreground">Financial breakdown</h3>
+                <FinancialBreakdown
+                  projections={fin.monthlyProjections}
+                  setupCosts={fin.setupCosts}
+                  breakevenMonth={fin.breakevenMonth}
+                />
+              </div>
+
+              <div>
+                <h3 className="mb-4 text-xl font-semibold text-foreground">How Grovyn Autopilot protects your expansion</h3>
+                <GrovynImpactCards impacts={sel.grovynImpact} />
+              </div>
+
+              <div>
+                <h3 className="mb-4 text-xl font-semibold text-foreground">Risk analysis</h3>
+                <RiskGauge risks={sel.risks} />
+              </div>
+
+              <div>
+                <h3 className="mb-4 text-xl font-semibold text-foreground">Rollout timeline</h3>
+                <TimelineVisualization newStores={sel.newStores} timeline={sel.timeline} locations={sel.locations as Array<{ zone: string; city?: string }>} />
+              </div>
             </CardContent>
           </Card>
         </>
-      )}
-
-      {!loading && !data && (
-        <p className="text-muted-foreground">Unable to load simulator data.</p>
       )}
     </div>
   );

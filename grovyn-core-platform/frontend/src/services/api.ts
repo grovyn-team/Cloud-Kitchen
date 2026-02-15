@@ -57,6 +57,10 @@ export const apiPaths = {
   insights: '/api/v1/insights',
   actions: '/api/v1/actions',
   simulate: (stores: number) => `/api/v1/simulate?stores=${stores}`,
+  expansionSimulate: (scenario?: string, newStores?: number) =>
+    scenario
+      ? `/api/v1/expansion/simulate?scenario=${scenario}${newStores != null ? `&newStores=${newStores}` : ''}`
+      : '/api/v1/expansion/simulate',
   customersSegments: '/api/v1/customers/segments',
   skusMarginAnalysis: '/api/v1/skus/margin-analysis',
 } as const;

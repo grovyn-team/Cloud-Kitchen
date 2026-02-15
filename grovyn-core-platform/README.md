@@ -1,4 +1,4 @@
-# Grovyn Core Platform
+# Grovyn Autopilot
 
 Foundational platform for a large-scale cloud kitchen operating system. **Milestone 1** delivers a monorepo structure, Core Data Service with unified models, deterministic seeded data, and versioned internal APIs.
 
@@ -85,7 +85,7 @@ npm install
 npm run dev
 ```
 
-Frontend runs on **port 5173** and shows: **Grovyn Core Platform Initialized**. No dashboards or logic in M1.
+Frontend runs on **port 5173** and shows: **Grovyn Autopilot Initialized**. No dashboards or logic in M1.
 
 ## Acceptance criteria (M1)
 

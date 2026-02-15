@@ -1,4 +1,4 @@
-# Grovyn Core Platform — Walkthrough (Non-Technical)
+# Grovyn Autopilot — Walkthrough (Non-Technical)
 
 This guide walks you through the app as if you’re using it for the first time. No technical knowledge needed.
 
@@ -29,7 +29,7 @@ You’re now inside the platform. What you see next depends on your role.
 
 ### Top bar
 
-- **Left:** “Grovyn Core Platform”
+- **Left:** “Grovyn Autopilot”
 - **Right:** Your role (Admin), number of stores, and **Log out**
 
 ### Side menu (left)

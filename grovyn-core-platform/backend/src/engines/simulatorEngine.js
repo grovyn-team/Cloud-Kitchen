@@ -1,6 +1,6 @@
 /**
  * Simulator Engine — branch/store scalability: 1–10 new stores.
- * With vs without Grovyn AI margin and repeat assumptions.
+ * With vs without Grovyn Autopilot margin and repeat assumptions.
  */
 
 import * as metricsEngine from './metricsEngine.js';

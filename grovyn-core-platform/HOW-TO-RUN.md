@@ -1,4 +1,4 @@
-# How to Run Grovyn Core Platform
+# How to Run Grovyn Autopilot
 
 ## What You Need
 
