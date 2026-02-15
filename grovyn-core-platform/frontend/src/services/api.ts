@@ -6,6 +6,12 @@ const baseURL =
     ? import.meta.env.VITE_API_BASE_URL.replace(/\/+$/, '')
     : '';
 
+/** Build full API URL for a path (e.g. '/api/v1/auth/stores') — avoids double slashes. */
+export function getApiUrl(path: string): string {
+  const p = path.startsWith('/') ? path.slice(1) : path;
+  return baseURL ? `${baseURL}/${p}` : `/${p}`;
+}
+
 export function createApi(
   getToken: () => string | null,
   onUnauthorized?: () => void
