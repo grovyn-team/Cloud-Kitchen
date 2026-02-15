@@ -1,0 +1,13 @@
+# Grovyn Autopilot — Frontend (Netlify)
+# Build and deploy the Vite app. Set VITE_API_BASE_URL in Netlify UI to your Vercel backend URL.
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+  environment = { NODE_VERSION = "18" }
+
+# SPA: all routes serve index.html (React Router)
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
