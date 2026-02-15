@@ -1,14 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/auth/AuthContext';
+import { getApiUrl } from '@/services/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import type { Role } from '@/types/api';
-
-const apiBase =
-  typeof import.meta.env.VITE_API_BASE_URL === 'string' && import.meta.env.VITE_API_BASE_URL
-    ? import.meta.env.VITE_API_BASE_URL.replace(/\/+$/, '')
-    : '';
 
 const DEMO_PASSWORD = 'grovyn@123';
 
@@ -31,8 +27,7 @@ export function Login() {
 
   useEffect(() => {
     if (role !== 'STAFF') return;
-    const url = apiBase ? `${apiBase}/api/v1/auth/stores` : '/api/v1/auth/stores';
-    fetch(url)
+    fetch(getApiUrl('api/v1/auth/stores'))
       .then((r) => (r.ok ? r.json() : { data: [] }))
       .then((d) => {
         const list = (d.data ?? []).map((s: { id: string; name: string }) => ({ id: s.id, name: s.name }));
@@ -66,13 +61,14 @@ export function Login() {
     } catch (err: unknown) {
       let msg = 'Login failed. Try again.';
       if (err && typeof err === 'object' && 'response' in err) {
-        const res = (err as { response?: { status?: number; data?: { message?: string } } }).response;
-        if (res?.data?.message) msg = res.data.message;
+        const res = (err as { response?: { status?: number; data?: { message?: string; error?: string } } }).response;
+        const bodyMsg = res?.data?.message ?? res?.data?.error;
+        if (bodyMsg) msg = bodyMsg;
         else if (res?.status === 503 || res?.status === 0 || res === undefined)
           msg =
             'Backend not reachable. Start the backend locally (npm run dev in grovyn-core-platform/backend) or set VITE_API_BASE_URL in .env to your deployed API and restart the dev server.';
-        else if (res?.status === 404)
-          msg = 'Cannot reach server. Is the backend running?';
+        else if (res?.status === 401) msg = 'Invalid email or password.';
+        else if (res?.status === 404) msg = 'Cannot reach server. Is the backend running?';
       } else if (
         err &&
         typeof err === 'object' &&
