@@ -1,11 +1,9 @@
 import axios, { type AxiosInstance } from 'axios';
 
-// In dev, use relative URLs so Vite proxy (target from VITE_API_BASE_URL or localhost:3001) is used
+// When VITE_API_BASE_URL is set (e.g. Vercel), call API directly. Otherwise use proxy in dev (empty baseURL).
 const baseURL =
-  import.meta.env.PROD &&
-  typeof import.meta.env.VITE_API_BASE_URL === 'string' &&
-  import.meta.env.VITE_API_BASE_URL.length > 0
-    ? import.meta.env.VITE_API_BASE_URL
+  typeof import.meta.env.VITE_API_BASE_URL === 'string' && import.meta.env.VITE_API_BASE_URL.length > 0
+    ? import.meta.env.VITE_API_BASE_URL.replace(/\/+$/, '')
     : '';
 
 export function createApi(

@@ -1,7 +1,37 @@
-import React, { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { AuthSession, LoginPayload, Role } from '@/types/api';
 import { createApi, apiPaths } from '@/services/api';
 import type { AxiosInstance } from 'axios';
+
+const STORAGE_KEY = 'grovyn_session';
+
+function loadStoredSession(): AuthSession | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as AuthSession;
+    if (!parsed?.sessionToken || !parsed?.userId || !parsed?.role) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveSession(session: AuthSession | null) {
+  if (session) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+    } catch {
+      /* ignore */
+    }
+  } else {
+    try {
+      localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+  }
+}
 
 interface AuthState {
   user: AuthSession | null;
@@ -20,13 +50,23 @@ interface AuthContextValue extends AuthState {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<AuthSession | null>(null);
+  const [user, setUser] = useState<AuthSession | null>(() => loadStoredSession());
   const tokenRef = useRef<string | null>(null);
   tokenRef.current = user?.sessionToken ?? null;
   const getToken = useCallback(() => tokenRef.current, []);
-  const logoutRef = useRef<() => void>(() => setUser(null));
-  const logout = useCallback(() => setUser(null), []);
+  const logoutRef = useRef<() => void>(() => {
+    setUser(null);
+    saveSession(null);
+  });
+  const logout = useCallback(() => {
+    setUser(null);
+    saveSession(null);
+  }, []);
   logoutRef.current = logout;
+
+  useEffect(() => {
+    saveSession(user);
+  }, [user]);
   const api = useMemo(
     () => createApi(getToken, () => logoutRef.current()),
     []
