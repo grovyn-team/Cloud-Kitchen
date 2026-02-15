@@ -1,0 +1,14 @@
+# Grovyn Autopilot — Netlify (monorepo root)
+# Build runs from frontend/. Set VITE_API_BASE_URL in Netlify UI for production.
+
+[build]
+  base = "frontend"
+  command = "npm run build"
+  publish = "dist"
+  environment = { NODE_VERSION = "18" }
+
+# SPA: all routes serve index.html (React Router)
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
