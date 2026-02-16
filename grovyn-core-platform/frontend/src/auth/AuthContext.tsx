@@ -5,12 +5,19 @@ import type { AxiosInstance } from 'axios';
 
 const STORAGE_KEY = 'grovyn_session';
 
+/** Stateless tokens contain a dot (payload.signature). Old in-memory tokens do not. */
+function isStatelessToken(token: string): boolean {
+  return typeof token === 'string' && token.includes('.');
+}
+
 function loadStoredSession(): AuthSession | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as AuthSession;
     if (!parsed?.sessionToken || !parsed?.userId || !parsed?.role) return null;
+    // Backend now uses stateless tokens (required for Vercel). Discard old-format tokens.
+    if (!isStatelessToken(parsed.sessionToken)) return null;
     return parsed;
   } catch {
     return null;

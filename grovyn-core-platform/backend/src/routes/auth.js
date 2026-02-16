@@ -3,7 +3,7 @@
  */
 
 import crypto from 'crypto';
-import { setSession } from '../middleware/authMiddleware.js';
+import { setSession, signSessionToken } from '../middleware/authMiddleware.js';
 import * as storeService from '../services/storeService.js';
 
 /**
@@ -23,11 +23,16 @@ const DEMO_PASSWORD = 'grovyn@123';
  * Returns: { userId, role, storeIds, sessionToken }
  */
 export function login(req, res) {
-  const { email, password, role, storeId } = req.body || {};
-  if (!email || typeof email !== 'string' || email.trim() === '') {
+  const body = req.body || {};
+  const email = typeof body.email === 'string' ? body.email.trim() : '';
+  const password = typeof body.password === 'string' ? body.password.trim() : '';
+  const role = body.role;
+  const storeId = body.storeId;
+
+  if (!email) {
     return res.status(400).json({ error: 'Bad request', message: 'Email is required' });
   }
-  if (!password || typeof password !== 'string') {
+  if (password === '') {
     return res.status(400).json({ error: 'Bad request', message: 'Password is required' });
   }
   if (password !== DEMO_PASSWORD) {
@@ -52,8 +57,9 @@ export function login(req, res) {
   }
 
   const userId = `u-${crypto.randomUUID().slice(0, 8)}`;
-  const sessionToken = crypto.randomBytes(24).toString('base64url');
-  setSession(sessionToken, { userId, role, storeIds });
+  const payload = { userId, role, storeIds };
+  const sessionToken = signSessionToken(payload);
+  setSession(sessionToken, payload);
 
   res.status(200).json({
     userId,
