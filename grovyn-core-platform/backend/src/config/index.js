@@ -27,4 +27,6 @@ export const config = {
     version: 'v1',
     prefix: '/api/v1',
   },
+  /** For stateless session tokens (required on serverless, e.g. Vercel). Set SESSION_SECRET in production. */
+  sessionSecret: process.env.SESSION_SECRET || 'demo-secret-change-in-production',
 };

@@ -3,7 +3,7 @@
  */
 
 import crypto from 'crypto';
-import { setSession } from '../middleware/authMiddleware.js';
+import { setSession, signSessionToken } from '../middleware/authMiddleware.js';
 import * as storeService from '../services/storeService.js';
 
 /**
@@ -52,8 +52,9 @@ export function login(req, res) {
   }
 
   const userId = `u-${crypto.randomUUID().slice(0, 8)}`;
-  const sessionToken = crypto.randomBytes(24).toString('base64url');
-  setSession(sessionToken, { userId, role, storeIds });
+  const payload = { userId, role, storeIds };
+  const sessionToken = signSessionToken(payload);
+  setSession(sessionToken, payload);
 
   res.status(200).json({
     userId,
