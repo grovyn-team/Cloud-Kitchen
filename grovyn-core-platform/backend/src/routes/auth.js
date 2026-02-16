@@ -23,11 +23,16 @@ const DEMO_PASSWORD = 'grovyn@123';
  * Returns: { userId, role, storeIds, sessionToken }
  */
 export function login(req, res) {
-  const { email, password, role, storeId } = req.body || {};
-  if (!email || typeof email !== 'string' || email.trim() === '') {
+  const body = req.body || {};
+  const email = typeof body.email === 'string' ? body.email.trim() : '';
+  const password = typeof body.password === 'string' ? body.password.trim() : '';
+  const role = body.role;
+  const storeId = body.storeId;
+
+  if (!email) {
     return res.status(400).json({ error: 'Bad request', message: 'Email is required' });
   }
-  if (!password || typeof password !== 'string') {
+  if (password === '') {
     return res.status(400).json({ error: 'Bad request', message: 'Password is required' });
   }
   if (password !== DEMO_PASSWORD) {

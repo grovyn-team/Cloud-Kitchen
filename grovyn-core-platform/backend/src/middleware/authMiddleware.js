@@ -68,31 +68,42 @@ export function verifySessionToken(token) {
 }
 
 /**
- * Optional auth: if Bearer token present and valid (stateless or in-memory), set req.user. Else req.user = undefined.
+ * Get session from request (Bearer token). Used by authOptional and requireAuth.
+ * @param {import('express').Request} req
+ * @returns {{ userId: string, role: string, storeIds: string[] } | undefined}
  */
-export function authOptional(req, res, next) {
+function getSessionFromRequest(req) {
   const header = req.headers.authorization;
-  if (!header || !header.startsWith('Bearer ')) {
-    req.user = undefined;
-    return next();
-  }
+  if (!header || !header.startsWith('Bearer ')) return undefined;
   const token = header.slice(7).trim();
   let session = sessions.get(token);
   if (!session) {
     session = verifySessionToken(token);
   }
-  if (!session) {
-    req.user = undefined;
-    return next();
-  }
-  req.user = { userId: session.userId, role: session.role, storeIds: session.storeIds || [] };
+  if (!session) return undefined;
+  return { userId: session.userId, role: session.role, storeIds: session.storeIds || [] };
+}
+
+/**
+ * Optional auth: if Bearer token present and valid (stateless or in-memory), set req.user. Else req.user = undefined.
+ */
+export function authOptional(req, res, next) {
+  const session = getSessionFromRequest(req);
+  req.user = session ? { userId: session.userId, role: session.role, storeIds: session.storeIds } : undefined;
   next();
 }
 
 /**
  * Require valid auth. If no valid token → 401.
+ * Populates req.user from Bearer token if not already set (so it works even if authOptional didn't run).
  */
 export function requireAuth(req, res, next) {
+  if (!req.user) {
+    const session = getSessionFromRequest(req);
+    if (session) {
+      req.user = { userId: session.userId, role: session.role, storeIds: session.storeIds };
+    }
+  }
   if (!req.user) {
     return res.status(401).json({ error: 'Unauthorized', message: 'Valid session required' });
   }
