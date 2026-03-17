@@ -49,6 +49,8 @@ const adminOrStaff = [authOptional, requireAuth, requireRole(['ADMIN', 'STAFF'])
 // Public (no auth)
 router.get(`${prefix}/health`, getHealth);
 router.get(`${prefix}/auth/stores`, getStoreOptions);
+// OPTIONS preflight for CORS from https://autopilot.grovyn.in
+router.options(`${prefix}/auth/login`, (_req, res) => res.sendStatus(200));
 router.post(`${prefix}/auth/login`, login);
 
 // Core data + store health + inventory + staff + alerts (ADMIN or STAFF; STAFF filtered in handlers)
