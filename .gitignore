@@ -1,0 +1,49 @@
+# Dependencies
+node_modules/
+
+# Environment and secrets (never commit)
+.env
+.env.*
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+# Keep .env.example files in repo (templates only; no secrets) — negate the .env.* rule above.
+!.env.example
+!**/.env.example
+
+# Build outputs
+dist/
+build/
+.vercel/
+.netlify/
+*.tsbuildinfo
+
+# Stray compiled duplicates of TS config files (tsc -b without noEmit can regenerate these
+# next to the source .ts file; only vite.config.ts should ever be tracked)
+frontend/vite.config.js
+frontend/vite.config.d.ts
+
+# Logs and debug
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS and editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE
+.idea/
+.vscode/
+*.sublime-*
+
+# Testing and coverage
+coverage/
+.nyc_output/
+*.lcov

@@ -1,0 +1,77 @@
+{
+  "$schema": "https://grovyn.in/schema/grovyn.config.schema.json",
+  "name": "Cloud Kitchen",
+  "slug": "cloud-kitchen",
+  "description": "Grovyn Autopilot — Cloud Kitchen Operations Intelligence platform (multi-tenant ready).",
+  "version": "1.0.0",
+  "type": "monorepo",
+  "repository": "git@github.com:grovyn-team/Cloud-Kitchen.git",
+  "defaultBranch": "main",
+  "services": [
+    {
+      "name": "backend",
+      "slug": "cloud-kitchen-api",
+      "description": "Core Data Service — REST API (Express, in-memory seeded data).",
+      "path": "backend",
+      "framework": "express",
+      "runtime": "node",
+      "nodeVersion": "20.x",
+      "port": 3001,
+      "healthCheck": "/api/v1/health",
+      "dockerfile": "backend/Dockerfile",
+      "buildCommand": "npm ci --omit=dev",
+      "startCommand": "npm start",
+      "installCommand": "npm ci",
+      "outputDirectory": null,
+      "persistentStorage": false,
+      "volumes": [],
+      "environment": [
+        { "key": "NODE_ENV", "required": false, "public": false, "default": "production", "description": "Node runtime mode." },
+        { "key": "PORT", "required": false, "public": false, "default": "3001", "description": "Port the API server listens on." },
+        { "key": "CORS_ORIGIN", "required": true, "public": false, "description": "Comma-separated list of allowed origins for the frontend(s) of this client." },
+        { "key": "SESSION_SECRET", "required": true, "public": false, "secret": true, "description": "HMAC secret for signing stateless session tokens. Must be unique per client/environment." },
+        { "key": "AUTH_DEMO_PASSWORD", "required": false, "public": false, "secret": true, "description": "Password for the demo login flow. Override or disable per client via AUTH_DEMO_ENABLED." },
+        { "key": "AUTH_DEMO_ENABLED", "required": false, "public": false, "default": "true", "description": "Set to false to disable the built-in demo password login for a client's production deployment." },
+        { "key": "SERVICE_NAME", "required": false, "public": false, "default": "grovyn-autopilot", "description": "Identifier reported by the health endpoint; set per client for observability." }
+      ]
+    },
+    {
+      "name": "frontend",
+      "slug": "cloud-kitchen-web",
+      "description": "React + Vite dashboard, served as a static site (nginx) with runtime-injected branding config.",
+      "path": "frontend",
+      "framework": "vite-react",
+      "runtime": "node",
+      "nodeVersion": "20.x",
+      "port": 8080,
+      "healthCheck": "/",
+      "dockerfile": "frontend/Dockerfile",
+      "buildCommand": "npm run build",
+      "startCommand": "nginx -g \"daemon off;\"",
+      "installCommand": "npm ci",
+      "outputDirectory": "dist",
+      "persistentStorage": false,
+      "volumes": [],
+      "environment": [
+        { "key": "VITE_API_BASE_URL", "required": true, "public": true, "description": "Origin of the client's backend API (no trailing slash), e.g. https://api.<client>.grovyn.in" },
+        { "key": "VITE_BRAND_NAME", "required": false, "public": true, "default": "Grovyn Autopilot", "description": "Product/company name shown throughout the UI." },
+        { "key": "VITE_BRAND_SHORT_NAME", "required": false, "public": true, "default": "Autopilot", "description": "Short form used in compact UI copy." },
+        { "key": "VITE_BRAND_LOGO_URL", "required": false, "public": true, "description": "URL to the client's logo image." },
+        { "key": "VITE_BRAND_FAVICON_URL", "required": false, "public": true, "description": "URL to the client's favicon." },
+        { "key": "VITE_BRAND_PRIMARY_COLOR", "required": false, "public": true, "default": "221 83% 53%", "description": "Primary theme color as an HSL triplet (H S% L%), matches CSS custom property format." },
+        { "key": "VITE_BRAND_SECONDARY_COLOR", "required": false, "public": true, "default": "210 40% 96%", "description": "Secondary/accent theme color as an HSL triplet." },
+        { "key": "VITE_SUPPORT_EMAIL", "required": false, "public": true, "description": "Support contact email shown in the UI." },
+        { "key": "VITE_SUPPORT_PHONE", "required": false, "public": true, "description": "Support contact phone shown in the UI." },
+        { "key": "VITE_COMPANY_ADDRESS", "required": false, "public": true, "description": "Company/restaurant address shown in the UI." },
+        { "key": "VITE_SHOW_DEMO_CREDENTIALS", "required": false, "public": true, "default": "true", "description": "Show the demo login hint on the sign-in screen. Set to false for real client deployments." }
+      ]
+    }
+  ],
+  "healthCheck": "/api/v1/health",
+  "environment": [],
+  "notes": [
+    "This file is consumed by the Grovyn deployment platform to build and run each service in this repository.",
+    "Frontend branding/runtime environment variables are also readable at container runtime via public/runtime-config.js (see deployment/README.md) so the same built image can serve multiple clients without a rebuild.",
+    "Additional client-specific values (branding, secrets, domains) are supplied entirely through environment variables — no source changes are required to onboard a new client."
+  ]
+}

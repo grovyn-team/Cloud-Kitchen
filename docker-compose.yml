@@ -1,0 +1,46 @@
+# Local / single-host reference deployment for one client instance.
+# Usage: docker compose up --build
+# For multiple clients, run one stack per client with a different .env (or project name)
+# and different published ports / reverse-proxy host rules — no source changes needed.
+services:
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required}
+      AUTH_DEMO_PASSWORD: ${AUTH_DEMO_PASSWORD:-grovyn@123}
+      AUTH_DEMO_ENABLED: ${AUTH_DEMO_ENABLED:-true}
+      SERVICE_NAME: ${SERVICE_NAME:-grovyn-autopilot}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "8080:8080"
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:3001}
+      VITE_BRAND_NAME: ${VITE_BRAND_NAME:-Grovyn Autopilot}
+      VITE_BRAND_SHORT_NAME: ${VITE_BRAND_SHORT_NAME:-Autopilot}
+      VITE_BRAND_LOGO_URL: ${VITE_BRAND_LOGO_URL:-}
+      VITE_BRAND_FAVICON_URL: ${VITE_BRAND_FAVICON_URL:-}
+      VITE_BRAND_PRIMARY_COLOR: ${VITE_BRAND_PRIMARY_COLOR:-221 83% 53%}
+      VITE_BRAND_SECONDARY_COLOR: ${VITE_BRAND_SECONDARY_COLOR:-210 40% 96%}
+      VITE_SUPPORT_EMAIL: ${VITE_SUPPORT_EMAIL:-}
+      VITE_SUPPORT_PHONE: ${VITE_SUPPORT_PHONE:-}
+      VITE_COMPANY_ADDRESS: ${VITE_COMPANY_ADDRESS:-}
+      VITE_SHOW_DEMO_CREDENTIALS: ${VITE_SHOW_DEMO_CREDENTIALS:-true}
+    depends_on:
+      - backend
+    restart: unless-stopped
