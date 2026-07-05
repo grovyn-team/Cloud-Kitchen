@@ -7,11 +7,11 @@ export function Layout() {
   const { role } = useAuth();
 
   return (
-    <div className="flex min-h-screen flex-col bg-[hsl(var(--background))]">
+    <div className="flex h-screen flex-col overflow-hidden bg-[hsl(var(--background))]">
       <Topbar />
-      <div className="flex flex-1">
+      <div className="flex flex-1 overflow-hidden">
         <Sidebar role={role} />
-        <main className="flex-1 overflow-auto p-6">
+        <main className="flex-1 overflow-y-auto p-6">
           <Outlet />
         </main>
       </div>
