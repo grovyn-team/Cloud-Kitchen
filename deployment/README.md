@@ -36,7 +36,7 @@ handle SSL (it provisions Let's Encrypt certs automatically per domain).
 
 ```bash
 cp .env.example .env      # fill in SESSION_SECRET at minimum
-docker compose --env-file .env up --build
+docker compose -f docker-compose.yml -f docker-compose.local.yml --env-file .env up --build
 ```
 
 Frontend: http://localhost:8080 · Backend: http://localhost:3001

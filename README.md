@@ -105,7 +105,7 @@ Frontend runs on **port 5173** (Vite dev server) and shows the full ops dashboar
 
 ```bash
 cp .env.example .env   # set SESSION_SECRET at minimum
-docker compose --env-file .env up --build
+docker compose -f docker-compose.yml -f docker-compose.local.yml --env-file .env up --build
 ```
 
 Frontend: http://localhost:8080 · Backend: http://localhost:3001/api/v1/health
@@ -164,7 +164,7 @@ Each service has its own multi-stage, non-root, healthchecked Dockerfile:
   (non-root by default), with `docker-entrypoint.sh` regenerating `runtime-config.js` from env
   vars on container start.
 
-From the repo root: `docker compose up --build`.
+From the repo root: `docker compose -f docker-compose.yml -f docker-compose.local.yml up --build` (the second file publishes ports to localhost for local testing; Dokploy uses just `docker-compose.yml`).
 
 ## Deployment (Dokploy / self-hosted)
 

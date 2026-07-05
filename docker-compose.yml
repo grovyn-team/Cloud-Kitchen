@@ -1,13 +1,23 @@
-# Local / single-host reference deployment for one client instance.
+# Reference deployment for one client instance.
 # Usage: docker compose up --build
-# For multiple clients, run one stack per client with a different .env (or project name)
-# and different published ports / reverse-proxy host rules — no source changes needed.
+#
+# Ports are intentionally NOT published to the host (no `ports:`). Dokploy's Traefik proxy
+# (or any other reverse proxy) reaches these containers over the internal Docker network by
+# service name + port, using the domain you configure per app in Dokploy. Publishing fixed
+# host ports would let only one stack on the whole server bind 8080/3001 at a time, which
+# breaks running multiple clients on the same Oracle host and is what caused
+# "port is already allocated" errors. If you need direct host access for local testing
+# without Dokploy, add a docker-compose.override.yml with your own `ports:` mapping —
+# don't edit this file for that.
+#
+# For multiple clients, run one stack per client (separate Dokploy app/project) with a
+# different .env and a different domain — no source changes needed.
 services:
   backend:
     build:
       context: ./backend
-    ports:
-      - "3001:3001"
+    expose:
+      - "3001"
     environment:
       NODE_ENV: production
       PORT: 3001
@@ -27,8 +37,8 @@ services:
   frontend:
     build:
       context: ./frontend
-    ports:
-      - "8080:8080"
+    expose:
+      - "8080"
     environment:
       VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:3001}
       VITE_BRAND_NAME: ${VITE_BRAND_NAME:-Grovyn Autopilot}

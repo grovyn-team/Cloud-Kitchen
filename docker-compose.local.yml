@@ -1,0 +1,12 @@
+# Optional overlay for local testing only — publishes ports to localhost so you can hit
+# the containers directly outside of Dokploy/Traefik. Not used by Dokploy (only
+# docker-compose.yml is deployed there); this file must be passed explicitly with -f.
+#
+# Usage: docker compose -f docker-compose.yml -f docker-compose.local.yml up --build
+services:
+  backend:
+    ports:
+      - "3001:3001"
+  frontend:
+    ports:
+      - "8080:8080"
