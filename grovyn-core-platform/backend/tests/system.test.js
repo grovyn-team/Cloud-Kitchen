@@ -17,6 +17,9 @@ const BASE = `http://localhost:${PORT}`;
 const HEALTH_URL = `${BASE}/api/v1/health`;
 const WAIT_MS = 30;
 const MAX_WAIT_MS = 15000;
+// Demo login credential the backend expects. Kept in sync with auth.js DEMO_PASSWORD
+// (override via AUTH_DEMO_PASSWORD once the backend reads it from env).
+const DEMO_PASSWORD = process.env.AUTH_DEMO_PASSWORD || 'grovyn@123';
 
 let serverProcess = null;
 const failures = [];
@@ -55,8 +58,9 @@ function startServer() {
     serverProcess.on('error', reject);
     const check = async () => {
       if (await waitForHealth()) return resolve();
-      if (!serverProcess.killed) return setTimeout(check, 200);
-      reject(new Error('Server exited before health: ' + stderr.slice(-500)));
+      // waitForHealth already polled for MAX_WAIT_MS. If we're still not healthy,
+      // fail loudly instead of retrying forever (e.g. a port conflict would otherwise hang).
+      reject(new Error('Server did not become healthy in time: ' + (stderr.slice(-500) || '(no stderr)')));
     };
     setTimeout(check, 500);
   });
@@ -326,7 +330,7 @@ async function main() {
   }
 
   try {
-    const loginRes = await post(`${BASE}/api/v1/auth/login`, { email: 'verify@test.com', role: 'ADMIN' });
+    const loginRes = await post(`${BASE}/api/v1/auth/login`, { email: 'verify@test.com', password: DEMO_PASSWORD, role: 'ADMIN' });
     assertOk(loginRes.status === 200, '/api/v1/auth/login', `expected 200 got ${loginRes.status}`);
     assertOk(loginRes.data.sessionToken, '/api/v1/auth/login', 'sessionToken present');
     const authToken = loginRes.data.sessionToken;
@@ -348,7 +352,7 @@ async function main() {
     await new Promise((r) => setTimeout(r, 1500));
 
     await startServer();
-    const loginRes2 = await post(`${BASE}/api/v1/auth/login`, { email: 'verify@test.com', role: 'ADMIN' });
+    const loginRes2 = await post(`${BASE}/api/v1/auth/login`, { email: 'verify@test.com', password: DEMO_PASSWORD, role: 'ADMIN' });
     const authToken2 = loginRes2.data.sessionToken;
     const snapshot2 = await captureDeterminismSnapshot(authToken2);
     compareDeterminism(snapshot1, snapshot2);

@@ -9,9 +9,10 @@ node_modules/
 .env.development.local
 .env.test.local
 .env.production.local
-# Keep .env.example in repo (template only; no secrets)
-.env.example
-/.env.example
+# Keep .env.example templates in repo (no secrets).
+# These must be NEGATIONS (!) — the `.env.*` rule above would otherwise ignore them.
+!.env.example
+!**/.env.example
 
 # Build outputs
 dist/

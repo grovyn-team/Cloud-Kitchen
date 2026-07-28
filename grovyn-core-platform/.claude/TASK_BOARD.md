@@ -1,0 +1,89 @@
+# TASK BOARD
+
+> Owned by Project Master. Every other agent updates its own row's status when it
+> finishes work — do not edit another agent's active row. Keep entries short;
+> detailed reasoning goes in DECISIONS_LOG.md.
+
+## How to use
+- Status values: `Backlog → Planned → In Progress → In Review (Security) → In Review (DB) → In Review (Critic) → Done → Blocked`
+- **Every row cites an Outcome** (O1 See / O2 Run / O3 Plan / O4 Trust). Infra
+  rows cite the outcome they unblock; if a row maps to none, it's flagged.
+- One row per unit of work (a module slice, not a whole module at once).
+- `Blocked` rows must state what/who they're blocked on.
+- Any decision row reaches `Done`/`Accepted` only after a `decision-critic` review.
+
+## Phase 0 — Audit & stabilization
+
+| ID | Outcome | Module | Task | Owner Agent | Status | Depends On | Notes |
+|----|---------|--------|------|-------------|--------|------------|-------|
+| P0-01 | O4 | Foundation | Audit existing backend + frontend (file-level) | Project Planner | **Done** | — | `AUDIT_PHASE0.md` |
+| P0-02 | O4 | Foundation | Phase plan (P1 detailed, later summary) | Project Planner | **Done** | P0-01 | `PHASE_PLAN.md` |
+| P0-03 | O4 | Foundation | Propose tenancy model + DB engine | Database Administrator | **Accepted (amended)** | P0-01 | D-001; RLS pulled into Phase 1 |
+| P0-04 | O4 | Foundation | Propose ORM choice | Database Administrator | **Hold → spike** | P0-03 | D-002; resolved by P1-00 RLS-pooling spike |
+| P0-05 | O4 | Foundation | Baseline OWASP review of inherited code | Security Engineer | **Done** | P0-01 | `SECURITY_REVIEWS/000-baseline-owasp.md`; SEC-01..04 close in P1 |
+| P0-06 | O4 | Foundation | Fix broken `npm run verify` (missing password) | Backend Developer | **Done*** | — | D-003. *Runtime PASS re-confirm pending `npm install` |
+| P0-07 | — | Foundation | Vite 5→8 bump — **RE-OPENED**, isolate + review | Frontend Developer + Security | **Backlog** | — | D-004 superseded: bump now exists uncommitted; build+smoke+audit+security review before merge |
+| P0-08 | O4 | Foundation | Populate TASK_BOARD with P0/P1 | Project Master | **Done** | P0-02 | this file |
+| P0-09 | governance | Foundation | Adopt O1–O4 + register `decision-critic` (frontmatter fix) | Project Master | **In Progress** | — | Agent file had no YAML → never registered; §A.1 of sign-off plan |
+
+## Phase 1 — Persistence + Tenancy + Auth (O4; unblocks everything). Auth first.
+
+| ID | Outcome | Module | Task | Owner Agent | Status | Depends On | Notes |
+|----|---------|--------|------|-------------|--------|------------|-------|
+| P1-00 | O4 | Foundation | RLS-pooling spike: `SET LOCAL app.current_tenant` in a pooled txn, Prisma **and** Drizzle; pick ORM | Database Administrator | Backlog | D-006 | Resolves D-002 before any migration; RLS+Prisma is the sharp edge |
+| P1-01 | O4 | Foundation | Minimal migrations: tenant, user, session, audit_log; **RLS enabled**; plan/branch_limit/seat_limit + soft-delete/retention fields | Database Administrator | Backlog | P1-00 | Non-null indexed `tenant_id`; retention baked in (D-008/D-009) |
+| P1-02 | O4 | Foundation | RLS context middleware + **BYPASSRLS role** (migrations/seed) | Database Administrator + Backend | Backlog | P1-01 | Per-request tenant GUC; backstop for a forgotten scope |
+| P1-03 | O4 | Foundation | Fail-closed scoped DAL wrapper (missing scope throws) | Database Administrator + Backend | Backlog | P1-02 | **Primary** enforcement; RLS is the backstop |
+| **P1-04** | O4 | Auth | ▶ **Real auth**: hashed pw (argon2id/bcrypt), tenant token + expiry/rotation, mandatory `SESSION_SECRET` (fail boot), gated demo pw, fix `AUTH_DEMO_PASSWORD` mismatch | Backend Developer | Backlog | P1-03 | Closes SEC-01/02/04, D-005 → **security review before anything else in P1 is Done** |
+| P1-05 | O4 | Auth/RBAC | Central tenant + permission + branch middleware; `requireRole`→`requirePermission`, `requireBranchAccess` | Backend Developer | Backlog | P1-04 | Replaces ad-hoc per-handler STAFF filters (SEC-03) → **security review** |
+| P1-06 | O2 | Foundation | Branch + role/permission tables & mgmt API | Backend Developer + DBA | Backlog | P1-05 | Admin creates branches & staff roles |
+| P1-07 | O2 | Foundation | Port stores/users services to DB, tenant-scoped | Backend Developer | Backlog | P1-03,P1-05 | Proves the foundation on real data |
+| P1-08 | O4 | Foundation | Gate seed/demo behind env flag, unreachable in prod | Backend Developer | Backlog | P1-01 | Closes SEC-06; keep the demo path, gate it |
+| P1-09 | O2 | Auth/RBAC | Frontend: AuthContext (tenant+permissions), RequireRole→permission gate, branch/staff mgmt UI (empty/loading/error) | Frontend Developer | Backlog | P1-05,P1-06 | Re-derive from real role model |
+| P1-10 | O4 | Foundation | Cross-tenant/cross-branch isolation test suite | Security Engineer + Backend | Backlog | P1-05,P1-07 | DoD gate: A can't reach B; staff can't cross branch; prove RLS alone blocks |
+| P1-11 | O1/O2 | Foundation | API contract v1 (auth/tenancy/RBAC) → `API_CONTRACT.md` | Backend Developer + Project Planner | Backlog | P1-04,P1-05 | Frontend builds against this |
+| P1-12 | O4 | Foundation | `verify` successor: seed a real test user, drop hardcoded pw | Backend Developer | Backlog | P1-04 | Removes the `AUTH_DEMO_PASSWORD` trap |
+| P1-13 | O4 | Foundation | PII-vs-financial erasure **design doc** (split master PII vs invoice-snapshot; backup-erasure mechanism) | Database Administrator + Security | Backlog | P1-01 | D-008; design + user sign-off before any customer-PII schema |
+
+## Phase 2 — Sales + minimal Admin dashboard (O2 → O1 vertical slice)
+
+> Exit: authenticate → upload a sales file → see real revenue across branches on a
+> dashboard. Thin slice first; margin/profit tiles fold in as Inventory lands.
+
+| ID | Outcome | Module | Task | Owner Agent | Status | Depends On | Notes |
+|----|---------|--------|------|-------------|--------|------------|-------|
+| P2-01 | O2 | Sales | Sales schema — `(tenant_id, branch_id, date)` composite index | Database Administrator | Backlog | P1 done | Rollup-shaped |
+| P2-02 | O2 | Sales | Manual entry + Excel/CSV import (validate-before-commit, row errors) | Backend Developer | Backlog | P2-01 | → **security review** (CSV formula injection, DoS) |
+| P2-03 | O1 | Dashboard | Port metrics/finance service (revenue rollups), tenant-scoped | Backend Developer | Backlog | P2-01 | Sales-derivable metrics only |
+| P2-04 | O1 | Dashboard | **Thin Admin dashboard**: revenue / orders / AOV / by-branch / day-week-month | Frontend Developer | Backlog | P2-03 | Margin/profit/health tiles labelled "coming", not faked |
+| P2-05 | O2 | Inventory | Inventory schema + manual/Excel add, append-only audit log | Database Administrator + Backend | Backlog | P2-01 | Enables margin |
+| P2-06 | O1 | Dashboard | Margin/profit/health tiles (need inventory COGS) | Backend + Frontend | Backlog | P2-05 | Completes the executive tiles |
+
+## Phase 3 — Customers + Staff Management (O2)
+_Expanded on arrival. Includes staff-removal token revocation (SEC-04 lifecycle)._
+
+## Phase 3.5 — Expansion Planning, deterministic (O3)
+
+> After Customers so margin/revenue/repeat inputs are all real data. No AI.
+
+| ID | Outcome | Module | Task | Owner Agent | Status | Depends On | Notes |
+|----|---------|--------|------|-------------|--------|------------|-------|
+| P35-01 | O3 | Expansion | Tenant-scope the deterministic expansion/simulator engines on real data | Backend Developer | Backlog | P3 done | `expansionPlanner.js`, `simulatorEngine.js` already deterministic |
+| P35-02 | O3 | Expansion | Lift hardcoded India cost constants (₹19L/store, 60% COGS, 25% commission, en-IN) into tenant-configurable inputs | Backend Developer + DBA | Backlog | P35-01 | Else projections are fiction (O4) |
+| P35-03 | O3 | Expansion | Expansion UI on real data; empty/loading/error states | Frontend Developer | Backlog | P35-01 | Works with HF down |
+
+## Later phases (SUMMARY — expand on arrival)
+- **Phase 4 — Full Dashboard + Notifications (O1).** Cross-branch executive view;
+  Staff→Admin notifications.
+- **Phase 5 — AI narrative layer (O1/O3 support).** HF-wrapped garnish; degrades
+  to nothing; never blocks a core response (D-010).
+- **Phase 6 — Tax Assistant (O4).** GST-India, CA-in-the-loop reconciliation pack;
+  jurisdiction abstraction seam (interface, not framework) (D-007).
+- **Phase 7 — Deployment + branding + DR (O2/O4).**
+  | P7-01 | O2 | Deploy | Docker Compose / Dokploy, long-lived pool; remove Vercel/Netlify residue | — | Backlog | — | D-006 |
+  | P7-02 | O4 | Deploy | **Backups / tested restore / offsite** for 72-month retention — **named owner required** | — | Backlog | P7-01 | D-006/D-008 |
+  | P7-03 | O2 | Branding | Per-tenant `runtime-config.js` branding injection | Frontend | Backlog | P7-01 | Greenfield |
+
+## Legend for "Owner Agent"
+Project Planner · Frontend Developer · Backend Developer · Database Administrator ·
+Security Engineer · Decision Critic · Project Master
