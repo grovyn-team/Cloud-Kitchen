@@ -5,10 +5,21 @@
 
 import { Router } from 'express';
 import { authOptional, requireAuth, requireRole, requireStoreAccess } from '../../middleware/authMiddleware.js';
-import { requireSession } from '../../middleware/sessionAuth.js';
+import { requireSession, requireRole as requireSessionRole } from '../../middleware/sessionAuth.js';
+import { csvUpload, handleUploadError } from '../../middleware/csvUpload.js';
+import { inventoryUpload, handleInventoryUploadError } from '../../middleware/inventoryUpload.js';
 import { pool } from '../../db/pool.js';
 import { getHealth } from '../health.js';
 import { login, refresh, logout, me, demoLogin, getDemoStoreOptions } from '../auth.js';
+import { createSale, importSales, getRollup, listSales, getSale } from '../sales.js';
+import {
+  createItem as createInventoryItem,
+  updateItem as updateInventoryItem,
+  importItems as importInventoryItems,
+  createRequest as createInventoryRequest,
+  listItems as listInventoryItems,
+  getItem as getInventoryItem,
+} from '../inventoryManagement.js';
 import { getCities } from './cities.js';
 import { getStores } from './stores.js';
 import { getBrands } from './brands.js';
@@ -83,6 +94,44 @@ router.get(`${prefix}/inventory-insights`, ...adminOrStaff, getInventoryInsights
 router.get(`${prefix}/staff`, ...adminOrStaff, getStaff);
 router.get(`${prefix}/workforce-insights`, ...adminOrStaff, getWorkforceInsights);
 router.get(`${prefix}/autopilot/alerts`, ...adminOrStaff, getAlerts);
+
+// Sales (P2-02/P2-03) -- real DB-backed session model (requireSession/
+// requireRole from sessionAuth.js), NOT the legacy authMiddleware.js HMAC
+// scheme the routes above still use (P1-05/P1-07 own migrating those).
+// Branch scope is enforced inside each handler (branchId arrives via
+// body/query, not a route :param, so requireBranchAccess's param-based
+// check doesn't apply directly) -- see isBranchAllowed() in sessionAuth.js,
+// used by every handler in routes/sales.js. /sales/import and /sales/rollup
+// are registered BEFORE /sales/:id so Express doesn't match "import"/
+// "rollup" as an :id param.
+const salesAuth = [requireSession(pool), requireSessionRole(['ADMIN', 'STAFF'])];
+router.post(`${prefix}/sales`, ...salesAuth, createSale(pool));
+router.post(`${prefix}/sales/import`, ...salesAuth, csvUpload.single('file'), handleUploadError, importSales(pool));
+router.get(`${prefix}/sales/rollup`, ...salesAuth, getRollup(pool));
+router.get(`${prefix}/sales`, ...salesAuth, listSales(pool));
+router.get(`${prefix}/sales/:id`, ...salesAuth, getSale(pool));
+
+// Inventory (P2-05 backend, 2026-07-30) -- real DB-backed module, same
+// requireSession/requireRole(sessionAuth.js) model as Sales, NOT the legacy
+// authMiddleware.js HMAC scheme `routes/inventory.js`'s mock endpoints still
+// use. Branch scope enforced inside each handler (branchId arrives via
+// body/query, not a route :param) via isBranchAllowed(), same as Sales.
+// Mounted under /inventory/items, /inventory/import, /inventory/requests --
+// does not collide with the legacy /inventory, /inventory-insights exact
+// paths above.
+const inventoryAuth = [requireSession(pool), requireSessionRole(['ADMIN', 'STAFF'])];
+router.post(`${prefix}/inventory/items`, ...inventoryAuth, createInventoryItem(pool));
+router.patch(`${prefix}/inventory/items/:id`, ...inventoryAuth, updateInventoryItem(pool));
+router.post(
+  `${prefix}/inventory/import`,
+  ...inventoryAuth,
+  inventoryUpload.single('file'),
+  handleInventoryUploadError,
+  importInventoryItems(pool)
+);
+router.post(`${prefix}/inventory/requests`, ...inventoryAuth, createInventoryRequest(pool));
+router.get(`${prefix}/inventory/items`, ...inventoryAuth, listInventoryItems(pool));
+router.get(`${prefix}/inventory/items/:id`, ...inventoryAuth, getInventoryItem(pool));
 
 // Aggregator & commission (ADMIN only)
 router.get(`${prefix}/aggregators`, ...adminOnly, getAggregators);

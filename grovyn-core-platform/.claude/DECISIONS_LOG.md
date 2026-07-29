@@ -966,3 +966,28 @@
   hardest on `release(err)` (verified against the library source, not memory) and the `{status,body}`
   duck-typing (the convenient shortcut my model family writes unquestioned). See
   `CRITIQUES/018-d016-context-middleware-pool.md`.
+
+### D-008 — Resolution: customer PII erasure mechanism (P1-13 unblocked)
+- Date: 2026-07-29
+- Raised by: decision-critic (inline verdict on the Phase 2/3/3.5/6 combined migration —
+  found D-013's employment-necessity reasoning does not transfer to `customer` PII, and
+  D-008's crypto-shred-vs-backup-expiry fork was still open while the `customer` table had
+  already shipped schema).
+- Decided by: User.
+- Decision: **Backup-expiry, not crypto-shredding.** Customer erasure requests are satisfied
+  by soft-deleting the record (`deleted_at`, existing D-008 pattern — no new column); the PII
+  is considered fully erased once all backups containing it have aged out. The erasure window
+  is a **deployment-time configuration value** (set per D-006's backup/retention policy, owned
+  by P7-02), not a schema constant. No per-subject crypto-shred column or key-management
+  pipeline is needed on `customer`.
+- Consequences / follow-ups: **P1-13 is unblocked** — its design-doc scope is now "document
+  the backup-expiry mechanism + the deployment-configured erasure window," not the harder
+  crypto-shred pipeline D-008 originally flagged as needing per-subject encryption from the
+  first migration. The **hard gate stays in force** until P1-13's doc actually lands: no real
+  customer PII (name/phone/email) writes until the erasure window is documented and a P7-02
+  backup-retention value exists to point at — an *undocumented* backup-expiry promise is not
+  yet a kept one. Revisit only if a client contract requires immediate/on-demand erasure
+  (backup-expiry cannot satisfy a "delete now" SLA).
+- Status: **Accepted.** No critic review — user directive, decision-critic gate suspended for
+  this build phase. Customers module remains not-yet-built pending this session's Sales
+  pattern-approval checkpoint.

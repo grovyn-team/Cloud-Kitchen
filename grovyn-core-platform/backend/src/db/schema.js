@@ -457,6 +457,19 @@ export const branch = pgTable(
   },
   (table) => [
     index('branch_tenant_id_idx').on(table.tenantId),
+    // Composite-FK hardening (same pattern/rationale as `sale`'s
+    // `sale_id_tenant_id_unique` and `inventory_item`'s
+    // `inventory_item_id_tenant_id_unique` above — closing the gap
+    // documented in `saleService.js`'s `branchExistsInTenant`, 2026-07-29):
+    // lets every `branch_id` FK below (`sale`, `inventory_item`, `customer`,
+    // `notification`, `staff_branch_access`) reference `(id, tenant_id)`
+    // instead of just `id`, so a child row's own `tenant_id` is verified
+    // equal to its referenced branch's actual `tenant_id` AT INSERT/UPDATE
+    // TIME by the FK constraint itself — not just by RLS, which a BYPASSRLS
+    // connection ignores entirely and which never re-validates FK targets on
+    // write (the same Postgres FK/RLS interaction `sale_line_item` and
+    // `inventory_movement` were already hardened against in 0008).
+    unique('branch_id_tenant_id_unique').on(table.id, table.tenantId),
     pgPolicy('branch_tenant_isolation', {
       for: 'all',
       to: 'public',
@@ -486,9 +499,14 @@ export const staffBranchAccess = pgTable(
     userId: uuid('user_id')
       .notNull()
       .references(() => user.id),
-    branchId: uuid('branch_id')
-      .notNull()
-      .references(() => branch.id),
+    // No single-column `.references(() => branch.id)` here — the composite
+    // FK below (`staff_branch_access_branch_id_tenant_id_fk`) covers
+    // referential integrity for this column AND cross-checks it against
+    // `tenant_id` in the same constraint (composite-FK hardening, closing
+    // the gap documented in `saleService.js`'s `branchExistsInTenant`,
+    // 2026-07-29 — same pattern as `sale_line_item`/`inventory_movement`
+    // from 0008).
+    branchId: uuid('branch_id').notNull(),
 
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     // This table's tombstone-equivalent field, named like `session.revoked_at`
@@ -509,6 +527,13 @@ export const staffBranchAccess = pgTable(
     uniqueIndex('staff_branch_access_active_unique_idx')
       .on(table.userId, table.branchId)
       .where(sql`${table.revokedAt} IS NULL`),
+    // Composite-FK hardening (2026-07-29) — same rationale as
+    // `sale_line_item`'s composite FK against `sale(id, tenant_id)` (0008).
+    foreignKey({
+      columns: [table.branchId, table.tenantId],
+      foreignColumns: [branch.id, branch.tenantId],
+      name: 'staff_branch_access_branch_id_tenant_id_fk',
+    }),
     pgPolicy('staff_branch_access_tenant_isolation', {
       for: 'all',
       to: 'public',
@@ -553,9 +578,13 @@ export const sale = pgTable(
     tenantId: uuid('tenant_id')
       .notNull()
       .references(() => tenant.id),
-    branchId: uuid('branch_id')
-      .notNull()
-      .references(() => branch.id),
+    // No single-column `.references(() => branch.id)` here — the composite
+    // FK below (`sale_branch_id_tenant_id_fk`) covers referential integrity
+    // for this column AND cross-checks it against `tenant_id` in the same
+    // constraint (composite-FK hardening, closing the gap documented in
+    // `saleService.js`'s `branchExistsInTenant`, 2026-07-29 — same pattern
+    // as `sale_line_item`'s FK against `sale(id, tenant_id)` from 0008).
+    branchId: uuid('branch_id').notNull(),
 
     saleDate: date('sale_date').notNull(),
     source: saleSourceEnum('source').notNull().default('manual'),
@@ -613,6 +642,17 @@ export const sale = pgTable(
     // that in the single-column sense but is what Postgres requires as the
     // referenced side of a composite FK.
     unique('sale_id_tenant_id_unique').on(table.id, table.tenantId),
+    // Composite-FK hardening (2026-07-29) — closes the gap documented in
+    // `saleService.js`'s `branchExistsInTenant` (app-layer workaround left
+    // in place as defense-in-depth): rejects an insert/update where
+    // `branch_id` points at a real `branch` row but that row's `tenant_id`
+    // doesn't match this row's own `tenant_id`, same rationale as
+    // `sale_line_item_sale_id_tenant_id_fk` above.
+    foreignKey({
+      columns: [table.branchId, table.tenantId],
+      foreignColumns: [branch.id, branch.tenantId],
+      name: 'sale_branch_id_tenant_id_fk',
+    }),
     pgPolicy('sale_tenant_isolation', {
       for: 'all',
       to: 'public',
@@ -716,9 +756,12 @@ export const inventoryItem = pgTable(
     tenantId: uuid('tenant_id')
       .notNull()
       .references(() => tenant.id),
-    branchId: uuid('branch_id')
-      .notNull()
-      .references(() => branch.id),
+    // No single-column `.references(() => branch.id)` here — the composite
+    // FK below (`inventory_item_branch_id_tenant_id_fk`) covers referential
+    // integrity for this column AND cross-checks it against `tenant_id` in
+    // the same constraint (composite-FK hardening, 2026-07-29 — see `sale`'s
+    // identical comment above).
+    branchId: uuid('branch_id').notNull(),
 
     name: text('name').notNull(),
     sku: text('sku'),
@@ -741,6 +784,14 @@ export const inventoryItem = pgTable(
     // rationale as `sale`'s `sale_id_tenant_id_unique` above: lets
     // `inventory_movement` FK against `(item_id, tenant_id)`.
     unique('inventory_item_id_tenant_id_unique').on(table.id, table.tenantId),
+    // Composite-FK hardening (2026-07-29) — closes the `branch_id` gap
+    // documented in `saleService.js`'s `branchExistsInTenant`, same
+    // rationale as `sale_branch_id_tenant_id_fk` above.
+    foreignKey({
+      columns: [table.branchId, table.tenantId],
+      foreignColumns: [branch.id, branch.tenantId],
+      name: 'inventory_item_branch_id_tenant_id_fk',
+    }),
     pgPolicy('inventory_item_tenant_isolation', {
       for: 'all',
       to: 'public',
@@ -771,6 +822,16 @@ export const inventoryItem = pgTable(
 // a future purge mechanism for this table (if one is ever built) will need
 // a different shape (e.g. time-boxed archival by `created_at`), same as
 // `audit_log` itself would. Flagging, not solving, here.
+//
+// `importBatchRef` (P2-05 backend, 2026-07-30): added so an Excel/CSV bulk
+// import run's movement rows can be found/grouped together, same rationale
+// and shape as `sale.importBatchRef` (`inventory_movement` had no such
+// column before this task — checked schema first per this task's own
+// instruction, then this small additive migration, see
+// `drizzle/0010_inventory_movement_import_batch_ref.sql`). Nullable: only
+// set on `movementType = 'excel_import'` rows; every other movement type
+// leaves it NULL. No GRANT change needed — GRANT is table-level in Postgres
+// and `inventory_movement` already has INSERT from 0007.
 // ============================================================================
 export const inventoryMovement = pgTable(
   'inventory_movement',
@@ -798,6 +859,8 @@ export const inventoryMovement = pgTable(
     // Set when `movementType = 'sale_deduction'`, linking the movement back
     // to the sale that caused it. Nullable for every other movement type.
     relatedSaleId: uuid('related_sale_id').references(() => sale.id),
+    // P2-05 backend addition (2026-07-30) — see module doc above.
+    importBatchRef: text('import_batch_ref'),
 
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -843,9 +906,12 @@ export const customer = pgTable(
     tenantId: uuid('tenant_id')
       .notNull()
       .references(() => tenant.id),
-    branchId: uuid('branch_id')
-      .notNull()
-      .references(() => branch.id),
+    // No single-column `.references(() => branch.id)` here — the composite
+    // FK below (`customer_branch_id_tenant_id_fk`) covers referential
+    // integrity for this column AND cross-checks it against `tenant_id` in
+    // the same constraint (composite-FK hardening, 2026-07-29 — see `sale`'s
+    // identical comment above).
+    branchId: uuid('branch_id').notNull(),
 
     name: text('name').notNull(),
     phone: text('phone'),
@@ -871,6 +937,14 @@ export const customer = pgTable(
       table.branchId,
       table.category,
     ),
+    // Composite-FK hardening (2026-07-29) — closes the `branch_id` gap
+    // documented in `saleService.js`'s `branchExistsInTenant`, same
+    // rationale as `sale_branch_id_tenant_id_fk` above.
+    foreignKey({
+      columns: [table.branchId, table.tenantId],
+      foreignColumns: [branch.id, branch.tenantId],
+      name: 'customer_branch_id_tenant_id_fk',
+    }),
     pgPolicy('customer_tenant_isolation', {
       for: 'all',
       to: 'public',
@@ -902,9 +976,12 @@ export const notification = pgTable(
     tenantId: uuid('tenant_id')
       .notNull()
       .references(() => tenant.id),
-    branchId: uuid('branch_id')
-      .notNull()
-      .references(() => branch.id),
+    // No single-column `.references(() => branch.id)` here — the composite
+    // FK below (`notification_branch_id_tenant_id_fk`) covers referential
+    // integrity for this column AND cross-checks it against `tenant_id` in
+    // the same constraint (composite-FK hardening, 2026-07-29 — see `sale`'s
+    // identical comment above).
+    branchId: uuid('branch_id').notNull(),
 
     type: notificationTypeEnum('type').notNull(),
     title: text('title').notNull(),
@@ -934,6 +1011,14 @@ export const notification = pgTable(
     // Admin's cross-branch notification feed (no branch filter) — leading
     // (tenant_id, status) prefix serves that without a full scan.
     index('notification_tenant_status_idx').on(table.tenantId, table.status),
+    // Composite-FK hardening (2026-07-29) — closes the `branch_id` gap
+    // documented in `saleService.js`'s `branchExistsInTenant`, same
+    // rationale as `sale_branch_id_tenant_id_fk` above.
+    foreignKey({
+      columns: [table.branchId, table.tenantId],
+      foreignColumns: [branch.id, branch.tenantId],
+      name: 'notification_branch_id_tenant_id_fk',
+    }),
     pgPolicy('notification_tenant_isolation', {
       for: 'all',
       to: 'public',
@@ -964,6 +1049,17 @@ export const taxPeriodSummary = pgTable(
     tenantId: uuid('tenant_id')
       .notNull()
       .references(() => tenant.id),
+    // KNOWN GAP, NOT FIXED HERE (2026-07-29): this is still a plain
+    // single-column FK to `branch.id`, unlike `sale`/`inventory_item`/
+    // `customer`/`notification`/`staff_branch_access`, which were hardened
+    // to a composite `(branch_id, tenant_id)` FK against `branch(id,
+    // tenant_id)` on 2026-07-29 (see `branch`'s `branch_id_tenant_id_unique`
+    // comment above and migration 0009). Out of scope for that fix per its
+    // own explicit table list (Sales-module-triggered, fast-mode); this
+    // table carries the identical cross-tenant FK-bypass exposure
+    // `saleService.js`'s `branchExistsInTenant` docstring describes and has
+    // no equivalent app-layer workaround today. Flagged for a follow-up
+    // migration, not resolved here.
     branchId: uuid('branch_id')
       .notNull()
       .references(() => branch.id),

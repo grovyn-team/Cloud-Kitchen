@@ -64,6 +64,20 @@
       "when": 1785319565724,
       "tag": "0008_chilly_jackpot",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785349688155,
+      "tag": "0009_lovely_morgan_stark",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785350090173,
+      "tag": "0010_gray_zeigeist",
+      "breakpoints": true
     }
   ]
 }

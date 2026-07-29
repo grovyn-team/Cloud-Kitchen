@@ -1,0 +1,1 @@
+ALTER TABLE "inventory_movement" ADD COLUMN "import_batch_ref" text;

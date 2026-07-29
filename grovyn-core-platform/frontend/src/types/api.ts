@@ -216,6 +216,177 @@ export interface CustomerSegmentsData {
   churnRisks: ChurnRisk[];
 }
 
+export interface SaleLineItemInput {
+  itemName: string;
+  sku?: string;
+  quantity: number;
+  unitPrice: number;
+  inventoryItemId?: string;
+}
+
+export interface SaleLineItem extends SaleLineItemInput {
+  id: string;
+  lineTotal?: number;
+}
+
+export interface SaleCreatePayload {
+  branchId: string;
+  saleDate: string;
+  paymentMethod?: string;
+  taxAmount?: number;
+  lineItems: SaleLineItemInput[];
+}
+
+export interface Sale {
+  id: string;
+  branchId: string;
+  saleDate: string;
+  paymentMethod?: string;
+  taxAmount?: number;
+  subtotal?: number;
+  totalAmount: number;
+  lineItems: SaleLineItem[];
+  createdAt?: string;
+  [key: string]: unknown;
+}
+
+export interface SalesImportRowError {
+  row: number;
+  error: string;
+}
+
+export interface SalesImportResult {
+  importedCount: number;
+  errors: SalesImportRowError[];
+  importBatchRef?: string;
+}
+
+export type RollupPeriod = 'day' | 'week' | 'month';
+
+export interface SalesRollupPoint {
+  branchId: string;
+  periodStart: string;
+  revenue: number;
+  orderCount: number;
+  aov: number;
+}
+
+export interface SalesRollupResponse {
+  period: RollupPeriod;
+  branchId?: string | null;
+  data: SalesRollupPoint[];
+}
+
+export interface SalesListMeta {
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export interface SalesListResponse {
+  data: Sale[];
+  meta: SalesListMeta;
+}
+
+export interface InventoryItemCreatePayload {
+  branchId: string;
+  name: string;
+  sku?: string;
+  unit: string;
+  lowStockThreshold?: number;
+  costPerUnit?: number;
+  initialStock?: number;
+}
+
+export interface InventoryStockAdjustment {
+  quantityDelta: number;
+  reason?: string;
+}
+
+export interface InventoryItemUpdatePayload {
+  name?: string;
+  sku?: string | null;
+  unit?: string;
+  lowStockThreshold?: number | null;
+  costPerUnit?: number | null;
+  stockAdjustment?: InventoryStockAdjustment;
+}
+
+export interface InventoryItem {
+  id: string;
+  branchId: string;
+  name: string;
+  sku?: string | null;
+  unit: string;
+  currentStock: number;
+  lowStockThreshold?: number | null;
+  costPerUnit?: number | null;
+  createdAt?: string;
+  updatedAt?: string;
+  [key: string]: unknown;
+}
+
+export interface InventoryMovement {
+  id: string;
+  itemId: string;
+  branchId: string;
+  movementType: string;
+  quantityDelta: number;
+  resultingStock: number;
+  reason?: string | null;
+  actorUserId?: string | null;
+  relatedSaleId?: string | null;
+  importBatchRef?: string | null;
+  createdAt: string;
+}
+
+export interface InventoryItemDetail extends InventoryItem {
+  recentMovements: InventoryMovement[];
+}
+
+export interface InventoryListMeta {
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export interface InventoryListResponse {
+  data: InventoryItem[];
+  meta: InventoryListMeta;
+}
+
+export interface InventoryImportRowError {
+  row: number;
+  error: string;
+}
+
+export interface InventoryImportResult {
+  importedCount: number;
+  createdCount?: number;
+  updatedCount?: number;
+  errors: InventoryImportRowError[];
+  importBatchRef?: string;
+}
+
+export interface InventoryRequestPayload {
+  branchId: string;
+  message: string;
+  itemName?: string;
+  inventoryItemId?: string;
+}
+
+export interface InventoryRequestResult {
+  id: string;
+  branchId: string;
+  type: string;
+  title: string;
+  message: string;
+  relatedEntityType?: string | null;
+  relatedEntityId?: string | null;
+  status: string;
+  createdAt: string;
+}
+
 export interface SkuMarginRow {
   skuId: string;
   name: string;

@@ -70,4 +70,24 @@ export const apiPaths = {
       : '/api/v1/expansion/simulate',
   customersSegments: '/api/v1/customers/segments',
   skusMarginAnalysis: '/api/v1/skus/margin-analysis',
+  sales: '/api/v1/sales',
+  salesImport: '/api/v1/sales/import',
+  salesRollup: (period: 'day' | 'week' | 'month', branchId?: string) =>
+    branchId
+      ? `/api/v1/sales/rollup?period=${period}&branchId=${branchId}`
+      : `/api/v1/sales/rollup?period=${period}`,
+  salesById: (id: string) => `/api/v1/sales/${id}`,
+  inventoryItems: '/api/v1/inventory/items',
+  inventoryItemById: (id: string) => `/api/v1/inventory/items/${id}`,
+  inventoryImport: '/api/v1/inventory/import',
+  inventoryRequests: '/api/v1/inventory/requests',
+  inventoryItemsList: (params: { branchId?: string; lowStock?: boolean; page?: number; pageSize?: number }) => {
+    const q = new URLSearchParams();
+    if (params.branchId) q.set('branchId', params.branchId);
+    if (params.lowStock) q.set('lowStock', 'true');
+    if (params.page) q.set('page', String(params.page));
+    if (params.pageSize) q.set('pageSize', String(params.pageSize));
+    const qs = q.toString();
+    return qs ? `/api/v1/inventory/items?${qs}` : '/api/v1/inventory/items';
+  },
 } as const;

@@ -8,6 +8,7 @@ import { Stores } from '@/pages/Stores';
 import { StoreDetail } from '@/pages/StoreDetail';
 import { Operations } from '@/pages/Operations';
 import { Finance } from '@/pages/Finance';
+import { Sales } from '@/pages/Sales';
 import { Alerts } from '@/pages/Alerts';
 import { RepeatEngine } from '@/pages/RepeatEngine';
 import { ScaleSimulator } from '@/pages/ScaleSimulator';
@@ -38,6 +39,10 @@ const routes: RouteObject[] = [
       {
         path: 'operations',
         element: <RequireRole roles={['STAFF']}><Operations /></RequireRole>,
+      },
+      {
+        path: 'sales',
+        element: <RequireRole roles={['ADMIN', 'STAFF']}><Sales /></RequireRole>,
       },
       {
         path: 'finance',

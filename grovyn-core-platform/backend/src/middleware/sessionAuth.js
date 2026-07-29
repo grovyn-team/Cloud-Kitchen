@@ -86,16 +86,36 @@ export function requireRole(allowedRoles) {
 }
 
 /**
- * ADMIN implicitly has access to every branch within their own tenant (RLS
- * already confines them to their tenant's branches; this only gates STAFF).
+ * The shared branch-scope predicate: ADMIN implicitly has access to every
+ * branch within their own tenant (RLS already confines them to their
+ * tenant's branches); STAFF is gated by `req.branchIds` (set by
+ * `requireSession` from `staff_branch_access`, never client input).
+ *
+ * Extracted (P2-02) so the Sales module's handlers -- which receive a
+ * `branchId` from a request BODY (`POST /sales`, `POST /sales/import`) or a
+ * QUERY param (`GET /sales`, `GET /sales/rollup`), not a route `:param` --
+ * can reuse the exact same decision `requireBranchAccess` uses below,
+ * instead of re-implementing the ADMIN/STAFF logic ad hoc per handler. Pure
+ * refactor: `requireBranchAccess`'s own behavior is unchanged (reverified
+ * against `tests/auth.pgtest.mjs`'s existing branch-scope checks).
+ * @param {import('express').Request} req a request `requireSession` has
+ *   already run on (so `req.userRole`/`req.branchIds` are DB-verified).
+ * @param {string} branchId
+ * @returns {boolean}
+ */
+export function isBranchAllowed(req, branchId) {
+  if (req.userRole === 'ADMIN') return true;
+  return Boolean(branchId) && Array.isArray(req.branchIds) && req.branchIds.includes(branchId);
+}
+
+/**
  * @param {string} paramName request-param name holding the branch id.
  * @returns {import('express').RequestHandler}
  */
 export function requireBranchAccess(paramName = 'branchId') {
   return (req, res, next) => {
-    if (req.userRole === 'ADMIN') return next();
     const branchId = req.params[paramName];
-    if (!branchId || !req.branchIds || !req.branchIds.includes(branchId)) {
+    if (!isBranchAllowed(req, branchId)) {
       return res.status(403).json({ error: 'Forbidden', message: 'Access to this branch is not permitted.' });
     }
     next();
