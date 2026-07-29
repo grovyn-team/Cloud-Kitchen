@@ -1,0 +1,16 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model RlsTest {
+  id        Int      @id @default(autoincrement())
+  tenantId  String   @map("tenant_id") @db.Uuid
+  payload   String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("rls_test")
+}

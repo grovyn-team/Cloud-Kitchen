@@ -7,13 +7,21 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "verify": "node tests/system.test.js"
+    "verify": "node tests/system.test.js",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
   },
   "engines": {
     "node": ">=18.0.0"
   },
   "dependencies": {
     "cors": "^2.8.6",
-    "express": "^4.21.0"
+    "drizzle-orm": "^0.45.2",
+    "express": "^4.21.0",
+    "pg": "^8.22.0"
+  },
+  "devDependencies": {
+    "dotenv": "^17.4.2",
+    "drizzle-kit": "^0.31.10"
   }
 }
