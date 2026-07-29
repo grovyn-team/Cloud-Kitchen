@@ -15,6 +15,55 @@
       "when": 1785266413685,
       "tag": "0001_force_rls_and_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785297255528,
+      "tag": "0002_pre_context_auth_resolvers",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785316842287,
+      "tag": "0003_branch_and_staff_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785316862269,
+      "tag": "0004_force_rls_and_grants_branch",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785316865188,
+      "tag": "0005_pre_context_session_resolver",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785318870985,
+      "tag": "0006_eager_wildside",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1785318900000,
+      "tag": "0007_force_rls_and_grants_p2_p6",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1785319565724,
+      "tag": "0008_chilly_jackpot",
+      "breakpoints": true
     }
   ]
 }

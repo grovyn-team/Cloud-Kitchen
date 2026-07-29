@@ -684,3 +684,285 @@
   tables, add nothing irreversible), and no tenant data lands in P1-01 — a real unowned
   gap to close before P1-04, not a defect that makes accepting P1-01 wrong. Same-model
   self-review flagged. See `CRITIQUES/016-d014-p1-01-schema-rls.md`.
+
+### D-015 — Pre-context auth read path: SECURITY DEFINER resolver functions (not a narrow role)
+- Date: 2026-07-29
+- Raised by: `decision-critic` (CRITIQUE 016 §C.1, non-optional forward spec on D-014's
+  ENDORSE WITH CHANGES verdict — item 1 of 5).
+- Decided by: **Awaiting decision-critic review before Accepted** (tenancy-chokepoint decision,
+  same gate D-014 needed — this is P1-02's sub-task S1).
+- Context: P1-01 built `tenant`/`user`/`session`/`audit_log` with RLS policies that require
+  `app.current_tenant` to already be set. The runtime role `grovyn_app` (NOBYPASSRLS) correctly
+  reads **zero rows** from `tenant`/`user` with no context set — fail-closed isolation working as
+  designed. But authentication is inherently pre-context: a login request must (1) resolve a
+  tenant from a subdomain/slug, then (2) find a user by email within that tenant, then (3) verify
+  the password — all **before** any `app.current_tenant` value exists to set. Under the current
+  policies, `grovyn_app` cannot perform steps 1 or 2. The only role that can is `grovyn_migrator`
+  (BYPASSRLS), and `bootstrap-roles.sql` explicitly documents that role as migration/seed-only,
+  never to serve a live request. So there was no legal path for login to work at all. Self-serve
+  tenant *creation* is explicitly **out of scope** here (deferred to a later phase, per prior
+  direction) — this decision covers only the **read** side: resolving an existing tenant by slug
+  and authenticating an existing user within it.
+- Decision: **Two narrow, parameterized `SECURITY DEFINER` resolver functions** —
+  `resolve_tenant_by_slug(p_slug text)` and `authenticate_lookup(p_tenant_id uuid, p_email text)`
+  — over CRITIQUE 016's other option (a narrow `SELECT`-only `grovyn_auth` role). Implemented in
+  `backend/drizzle/0002_pre_context_auth_resolvers.sql`.
+  - **Ownership/privilege model:** each function is created by (and owned by) whichever role runs
+    the migration — `grovyn_migrator` per `drizzle.config.js`'s `DATABASE_MIGRATOR_URL`, already
+    `BYPASSRLS`. `SECURITY DEFINER` functions execute with the *owner's* privileges regardless of
+    caller, so these functions bypass RLS/`FORCE ROW LEVEL SECURITY` by construction — the same way
+    any `BYPASSRLS` connection would. That bypass is intentionally scoped by each function's own
+    hardcoded, parameterized `WHERE` clause (not by RLS, which does not apply inside the function
+    body at all) — `resolve_tenant_by_slug` filters `slug = $1 AND deleted_at IS NULL LIMIT 1`;
+    `authenticate_lookup` filters `tenant_id = $1 AND lower(email) = lower($2) AND deleted_at IS
+    NULL LIMIT 1`.
+  - `grovyn_app` (the runtime, request-facing role) is granted **only `EXECUTE`** on these two
+    functions — no new direct table grant. `EXECUTE` is `REVOKE`d from `PUBLIC` (Postgres grants it
+    by default on `CREATE FUNCTION`) and re-`GRANT`ed only to `grovyn_app`, so a future role added
+    to the cluster does not silently inherit this pre-context path.
+  - **`search_path` is locked to `''`** inside both function bodies and every identifier is
+    schema-qualified (`public.tenant`, `public."user"`) — closes the classic `SECURITY DEFINER`
+    search-path-hijack footgun, where a caller-controlled search_path could otherwise cause the
+    function to resolve a malicious shadow object instead of the real `public` table.
+  - `authenticate_lookup` bakes in, as a single chokepoint, two rules CRITIQUE 016 §B.4 flagged as
+    easy for P1-04 to get wrong if left to per-call-site application code: the `deleted_at IS NULL`
+    filter (a deleted and an active user can share an email under the partial unique index, so an
+    unfiltered lookup is ambiguous) and the case-insensitive `lower(email)` match (matching
+    `user_tenant_email_active_unique_idx`'s exact shape, which the query is index-covered by).
+- Alternatives considered:
+  - **(a) Narrow `SELECT`-only role (`grovyn_auth`).** Rejected. Three concrete reasons, weighed
+    against the three questions CRITIQUE 016 posed:
+    1. **Does it stay narrow?** A role granted blanket table-level `SELECT` (even column-limited)
+       on `tenant`/`user` for unscoped reads is a standing capability that a future pre-context need
+       most naturally gets satisfied by *adding another grant* to the same role — the role has no
+       structural pressure to stay narrow. A resolver function's signature (fixed parameters, fixed
+       return columns, fixed `WHERE`) is self-scoping by construction: a new need is a new function,
+       not a widened grant on an existing one. A compromised/SQL-injected call site behind the role
+       could enumerate the *entire* `tenant`/`user` tables across all tenants (an unscoped `SELECT`
+       is just a `SELECT`); a compromised call site behind the functions can only invoke the fixed
+       parameterized query, at most one row per call.
+    2. **Is it easier for P1-04 to call?** A distinct role requires either a second connection pool
+       with separate credentials used exclusively for the auth code path (operational overhead:
+       two pools, two credentials to rotate, code must select the right pool by context) or
+       reusing `grovyn_app`'s existing connection while somehow also being `grovyn_auth` for that
+       one query, which Postgres does not support mid-session without `SET ROLE` (itself another
+       footgun surface). The functions need **no second pool** — `grovyn_app`'s existing connection
+       runs `SELECT * FROM resolve_tenant_by_slug($1)` exactly like any other query.
+    3. **Consistency with the `grovyn_migrator`/`grovyn_app` split P1-01 already established?** That
+       split's whole idiom is "a privileged role (migrator, `BYPASSRLS`) is never used to serve a
+       request; the unprivileged role serves requests." A `SECURITY DEFINER` function *is* the
+       standard Postgres mechanism for "let an unprivileged role invoke a narrowly-scoped privileged
+       operation without directly granting it broader access" — it extends the existing idiom rather
+       than introducing a third role/credential/pool axis alongside it.
+  - **A third option, not raised by CRITIQUE 016, considered and rejected:** relaxing the RLS
+    policies themselves (e.g. an additional permissive policy on `tenant`/`user` allowing
+    unconditional `SELECT` for role `grovyn_app`). Rejected outright — this widens the *general*
+    query surface for the role every other query in the app already runs as, defeating the fail-
+    closed guarantee P1-00/P1-01 built and verified for every other access path through `grovyn_app`,
+    not just the login path. Neither considered option (a) nor the chosen resolvers touch the
+    existing RLS policies at all.
+- Consequences / follow-ups:
+  1. **P1-04 (real auth) must call these functions, not raw `SELECT`s, for tenant resolution and
+     user lookup.** Calling `SELECT * FROM tenant WHERE slug = $1` directly as `grovyn_app` will
+     continue to correctly return zero rows pre-context — that is not a bug to route around by
+     other means, it is the reason these functions exist.
+  2. Self-serve tenant **creation** remains explicitly unresolved and out of scope for this
+     decision — a future task must design an analogous bounded write path (e.g. a `SECURITY
+     DEFINER` `create_tenant()` with its own narrow, audited surface) if/when self-serve onboarding
+     is prioritized. Not started here; do not infer a pattern for it from this decision beyond "the
+     same tool family is available."
+  3. Every future pre-context read need (if any) should default to a new narrowly-scoped resolver
+     function following this same shape, not a widened grant on an existing one or on a table
+     directly — this is the "stays narrow" property the alternatives analysis above is betting on;
+     if a third pre-context function is ever needed, revisit whether the pattern is still holding.
+  4. `backend/src/db/schema.js`'s `tenant.slug` comment (~lines 170-186) is corrected in this same
+     task to describe this mechanism accurately (it previously claimed slug lookup "just works"
+     pre-context via a plain scoped query, which CRITIQUE 016 correctly identified as false and
+     misleading to P1-04's author).
+  5. Drizzle has no schema DSL for `SECURITY DEFINER` functions or extra roles — this migration is
+     hand-written, following the same pattern `0001_force_rls_and_grants.sql` established
+     (`0000`/`0001` auto-generated-vs-hand-written split). Registered correctly in
+     `drizzle/meta/_journal.json`/`0002_snapshot.json` via `drizzle-kit generate --custom` (not a
+     bare file drop) so `drizzle-kit migrate` picks it up in order.
+- **Verification (real evidence, not by inspection — same bar D-014 set):** ran a real throwaway
+  `postgres:16-alpine` container. Bootstrapped roles, applied `0000`→`0001`→`0002` in order as
+  `grovyn_migrator` (matching the real deployment ownership model, not the superuser), seeded two
+  tenants and two users (one active, one soft-deleted) as `grovyn_migrator`, then connected as
+  `grovyn_app` with **no `app.current_tenant` set** and ran 8 checks, all passing:
+  1. `SELECT count(*) FROM tenant` → 0 (fail-closed default path unaffected by this migration).
+  2. `SELECT count(*) FROM "user"` → 0 (same).
+  3. `resolve_tenant_by_slug('acme')` → 1 row, correct tenant, **with no context set** — the
+     capability this decision adds.
+  4. `resolve_tenant_by_slug('does-not-exist')` → 0 rows.
+  5. `authenticate_lookup(<acme-id>, 'admin@acme.EXAMPLE')` (mixed case) → 1 row, correct user —
+     confirms the case-insensitive match.
+  6. `authenticate_lookup(<wrong-tenant-id>, 'admin@acme.example')` → 0 rows — a caller cannot use
+     the function to find a user by email across an arbitrary/wrong tenant, only within a tenant it
+     already resolved.
+  7. `authenticate_lookup(<acme-id>, 'gone@acme.example')` (the soft-deleted user) → 0 rows —
+     confirms the baked-in `deleted_at IS NULL` filter.
+  8. `has_table_privilege('grovyn_app', 'tenant', 'SELECT')` → true — confirms this migration did
+     **not** need to add any new direct table grant (0001's existing grant, gated by RLS, is
+     untouched and still requires context for ordinary queries).
+  - **Search-path hijack test (the specific `SECURITY DEFINER` footgun this decision calls out):**
+    created a rogue `evil.tenant` table (same columns, a poisoned row with `slug = 'acme'`), granted
+    `grovyn_app` `USAGE`/`SELECT` on it, then in a `grovyn_app` session set
+    `SET search_path = evil, public` and re-ran `resolve_tenant_by_slug('acme')`. It still returned
+    the **real** `Acme Corp` row from `public.tenant`, while an ordinary unqualified
+    `SELECT * FROM tenant` run in that same poisoned session picked up the rogue `evil.tenant` row
+    instead — direct proof that `SET search_path = ''` + full qualification inside the function body
+    neutralizes the hijack that an unprotected `SECURITY DEFINER` function would have been vulnerable
+    to.
+  - Container torn down after the run (`docker rm -f`); nothing persisted beyond this decision's
+    evidence trail.
+- Status: **Accepted — decision-critic gate SATISFIED per `CRITIQUES/017-d015-pre-context-auth-resolvers.md`
+  (ENDORSE WITH CHANGES / Significant).** The mechanism is correct, minimally scoped, and honestly
+  verified; the `SECURITY DEFINER` search-path footgun is genuinely closed (confirmed against Postgres
+  semantics — `SET search_path = ''` is the recommended form, `pg_catalog` implicit, `pg_temp` never
+  searched for functions/operators, all relation/type refs schema-qualified — not merely a passing
+  test), and the choice over the narrow-role alternative is right on blast-radius under app-layer SQLi.
+  Two non-optional forward specs (neither edits `0002`; both on unbuilt tasks — do **not** block S2/S3
+  of P1-02): (1) **[P1-04]** close the user-enumeration **timing** oracle — the found/not-found
+  asymmetry (fast 0-row miss vs slow app-side argon2id verify) enumerates valid staff emails; P1-04
+  must dummy-verify against a fixed decoy hash on every failure path and return one indistinguishable
+  error; (2) **[P1-10]** assert the definer hinge, not just the role attribute — the two resolvers are
+  `SECURITY DEFINER`, owned by a BYPASSRLS role (expected `grovyn_migrator`), `EXECUTE` for `grovyn_app`
+  only (no `PUBLIC`), to catch owner drift if a migration is ever run as superuser. Minor: rate-limit
+  unauthenticated slug probing (`resolve_tenant_by_slug` is a sanctioned tenant-existence/branding
+  oracle by design).
+- **Critic verdict (genuine, 2026-07-29) — ENDORSE WITH CHANGES (Significant). Critic gate on D-015
+  SATISFIED; may move to Accepted.** The real decision is the permanent shape of the only sanctioned
+  hole in the fail-closed wall; judged on blast radius (the axis that matters) the design is good — a
+  `SECURITY DEFINER` fixed-signature function yields one row per exact-key call, strictly narrower than
+  the rejected blanket-`SELECT` role under the realistic app-layer-SQLi threat. Injection surface of
+  the bodies: none (pure `LANGUAGE sql`, typed params, no `format()`/`EXECUTE`/concat). `password_hash`
+  return is correct (argon2id must verify app-side; the hash is not the secret; `EXECUTE`-gated to
+  `grovyn_app`). Two-way door — `0002` touches no table/policy/data. **Self-review flagged loudly:**
+  D-015 picked one of the two options *I* named in CRITIQUE 016, so I pressed hardest where my 016
+  framing was thinnest — I verified the `search_path=''` semantics against Postgres rules rather than
+  trust the green test, and I found the timing-oracle consequence my own 016 §C.1 missed (named the
+  read-path gap, not its timing). *Objection tried ("Block — returning `password_hash` from a
+  pre-context unscoped-by-construction function widens the auth attack surface on the tenancy
+  chokepoint") and why it fails:* the hash is not the secret and is the only workable place to verify
+  argon2id, the function is `EXECUTE`-gated and one-row-per-exact-key (narrower than the role
+  alternative), and the genuine residual (timing enumeration) lives in the *unbuilt* P1-04 verify
+  layer as a one-sentence forward spec committing no data or schema — Significant-and-required, not
+  Blocking. Does NOT block S2 (`set_config` middleware) or S3 (runtime pool), which are independent of
+  the resolver choice. See `CRITIQUES/017-d015-pre-context-auth-resolvers.md`.
+
+### D-016 — P1-02 S2/S3: commit-before-response handler-wrapping middleware; three distinct DB env vars, no fallback
+- Date: 2026-07-29
+- Raised by: Backend Developer (executing P1-02 S2/S3).
+- Decided by: **Awaiting decision-critic review before Accepted** (tenancy-chokepoint-adjacent
+  implementation, same gate D-015/S1 needed — this is P1-02's S4).
+- Context: D-015/CRITIQUE 016 fixed the pre-context read path; D-002/CRITIQUE 015 fixed *how* the
+  tenant GUC must be set (`set_config($1, true)`, bound parameter). Neither decided **how a request
+  handler is handed the transaction-scoped connection**, or **the exact env-var shape** the runtime
+  pool reads. Both were net-new implementation surface for this task — no prior decision constrained
+  them, but both are the actual mechanism every future route handler (P1-03 DAL onward) will be
+  written against, so getting the contract wrong here is expensive to unwind later. No table/policy/
+  data is touched by either choice (two-way door).
+- Decision:
+  1. **`withTenantContext(pool)` is a handler-wrapping higher-order function, not a
+     `(req, res, next)` Express middleware that attaches `req.db` and commits via `res.on('finish')`.**
+     A route handler wrapped by it has signature `(req, db) => result` — it returns a value (or
+     throws), it never calls `res.json()`/`res.send()` itself. The wrapper COMMITs (or ROLLBACKs) and
+     releases the connection **before** sending any response byte, then sends the response itself from
+     the (already committed) result. Rejected alternative: attach `req.db` in ordinary middleware and
+     commit on `res.on('finish')` — this is the standard pattern in most Express+pg transaction
+     libraries, but it commits **after** the response has already been flushed to the client, so a
+     COMMIT failure after `res.on('finish')` fires is unrecoverable-to-the-client (200 already sent,
+     data never actually persisted). The wrapping-HOF form makes "commit succeeded" a precondition of
+     "response sent" by construction, at the cost of a less familiar middleware shape for whoever
+     writes P1-03/P1-04's route handlers (documented at length in the file's header comment for that
+     reason).
+  2. **The handler receives only a frozen `{ query }` object bound to the checked-out client — never
+     the pool, never the raw `pg` client, never `res`.** This is the literal implementation of the
+     task's "structurally hard for a future handler to accidentally query the pool directly"
+     requirement: `pool` is a constructor parameter to `withTenantContext`, not something re-exported
+     for route files to import, and the object handed to the handler has no `.release()`/transaction-
+     control surface for a handler to misuse.
+  3. **Three distinct env vars, not two.** `DATABASE_APP_URL` (new, this task) is read **only** by
+     `src/db/pool.js`, the runtime pool. `DATABASE_MIGRATOR_URL` / `DATABASE_URL` (existing,
+     drizzle.config.js) remain CLI-only, read **only** by drizzle-kit, with `DATABASE_URL` as the
+     CLI's own documented fallback for `DATABASE_MIGRATOR_URL` — that fallback is drizzle-kit's
+     pre-existing behavior (from P1-01), not something this task adds or endorses widening. `src/db/
+     pool.js` has **zero** fallback of any kind: missing `DATABASE_APP_URL` throws at import time,
+     full stop, regardless of what `DATABASE_URL`/`DATABASE_MIGRATOR_URL` are set to (verified — see
+     report). Rejected alternative: reuse `DATABASE_URL` as the runtime app connection, matching what
+     `.env.example`'s P1-01-era comment on that variable already (aspirationally, before P1-02
+     existed) claimed it was for. Rejected because `DATABASE_URL` is also the CLI's documented
+     migrator fallback target — a deployment that sets only `DATABASE_URL` meaning "the app
+     connection" would silently become the migrator's fallback too if `DATABASE_MIGRATOR_URL` were
+     ever left unset, and vice versa a `DATABASE_URL` meant for the CLI's convenience could get
+     mistaken for "the" runtime connection by a future reader. A dedicated `DATABASE_APP_URL` with no
+     shared name is the only way to make SECURITY_REVIEWS/002 IR-03 ("two roles must be genuinely
+     distinct everywhere") hold by construction rather than by convention. `.env.example` updated
+     accordingly — see report.
+  4. **Test pool is dependency-injected, not the runtime singleton.** `withTenantContext(pool)` takes
+     the pool as a parameter specifically so `tests/tenantContext.pgtest.mjs` can bind it to a small
+     (`max: 2` / `max: 3`), test-owned pool to force real connection reuse under concurrency (S3.2),
+     without needing `DATABASE_APP_URL` set just to exercise the middleware's logic in isolation.
+     `src/db/pool.js`'s singleton is verified separately (its own fail-closed-at-import behavior).
+- Alternatives considered: covered inline above (per-choice). A fourth, broader alternative — building
+  a small `runInTenantContext()`/DAL-shaped wrapper that also does query-building — was explicitly
+  rejected as out of scope: that's P1-03's job (the fail-closed DAL), not this task's.
+- Consequences / follow-ups: P1-03 (DAL) and P1-04 (real auth/routes) must write handlers against the
+  `(req, db) => result` contract, not a `req.db` + manual `res.json()` pattern. If a future need
+  genuinely requires a handler to stream a response or set custom headers before the body is known
+  (not needed by anything built so far), the wrapper's "handler returns a value, wrapper sends it"
+  contract will need revisiting — flagged here so it isn't rediscovered as a surprise.
+- **Verification (real evidence, not by inspection):** ran a real throwaway `postgres:16-alpine`
+  container (migrations 0000→0002 + `bootstrap-roles.sql` applied as `grovyn_migrator`, 2 tenants + 1
+  active user each seeded). `tests/tenantContext.pgtest.mjs` (20 checks, plain Node + `node:assert`,
+  no framework, matching `tests/system.test.js`'s convention) — all pass: tenant self-access + cross-
+  tenant `user` isolation via real HTTP round-trips through the wrapped handlers; missing/malformed
+  `tenantId` → 400 with no query executed; a handler throw → ROLLBACK + generic 500 (no stack trace
+  leaked) + pool recovers on the next request (poisoned connection discarded via `client.release(err)`,
+  not silently reused); no GUC leakage to a fresh checkout on the same pool after commit; a real
+  pool-oversubscription run (pool=3, 24 concurrent requests round-robined across 2 tenants, each
+  handler doing a `pg_sleep(0.05)` to force genuine mid-flight overlap) — zero cross-tenant leaks,
+  confirmed real connection reuse via `pg_backend_pid()` (≤3 distinct PIDs across 24 requests); a
+  direct SQL-injection-shaped payload (`"x'; DROP TABLE tenant; --"`) passed as the bound `set_config`
+  parameter was stored and echoed back as an inert literal, and the `tenant` table was confirmed intact
+  afterward via the BYPASSRLS migrator connection (proves bound-parameter behavior concretely, not just
+  "should be safe by construction"); and `src/db/pool.js` verified to throw at import (child-process
+  probe) when `DATABASE_APP_URL` is unset **even when `DATABASE_URL`/`DATABASE_MIGRATOR_URL` are set**,
+  and to succeed when it is set. `npm run verify` (existing DB-free suite) re-confirmed passing
+  unmodified after this change — purely additive, no regression.
+- Status: **Accepted — decision-critic gate SATISFIED per `CRITIQUES/018-d016-context-middleware-pool.md`
+  (ENDORSE WITH CHANGES / Significant).** Env-var isolation (IR-03 closure) is uncontroversial and
+  correct; the load-bearing decision is the request-to-transaction *contract* every future handler is
+  written against. The single highest-stakes claim — that `client.release(err)` destroys rather than
+  recycles a poisoned connection — was verified against the actual installed `pg-pool` source
+  (`_release` line 392 → `_remove` line 181 → `client.end()`), not accepted on the code's say-so; it
+  holds. Five forward-spec changes (none edit the S2/S3 artifacts, none block Accepted or S4) in the
+  verdict. Does NOT block S4's security-engineer pass — CLEAR to proceed.
+- **Critic verdict (genuine, 2026-07-29) — ENDORSE WITH CHANGES (Significant). Critic gate on D-016
+  SATISFIED; may move to Accepted. S4 security pass CLEAR to proceed.** The real decision is bigger
+  than the entry's "env-var + middleware shape": it is the `(req, db) => result` contract every route
+  handler (P1-03 DAL onward) inherits — a *soft one-way door* (commits no data, but product-wide to
+  change once handlers exist), mis-classified as a clean two-way door. Verified against source, not
+  prose: `release(err)` genuinely destroys the connection (pg-pool `_remove`→`client.end()`); the GUC
+  is transaction-scoped and auto-resets (test S2.5); the bound `set_config` parameter is provably inert
+  (injection test drops nothing); the no-fallback pool throws at import (child-process probe); nothing
+  is wired into the live app (grep confirms). Commit-before-response is *more* correct than the
+  `res.on('finish')` pattern it rejects — a COMMIT failure yields 500, never a 200 (verified in code).
+  **Two Significant forward specs (neither edits S2/S3):** (F1) [P1-03] the `{status, body}` response
+  envelope is duck-typed (`tenantContext.js:134`) — domain rows that own `status`+`body` columns
+  collide with it; replace with an explicit tagged value while the handler count is still zero (the
+  reversibility window is open today). (F2) [P1-04] no blessed pre-context path exists for D-015's
+  resolvers — `pool.js`'s "always go through withTenantContext" doctrine actively contradicts login's
+  need to run `resolve_tenant_by_slug`/`authenticate_lookup` with no tenant context; name a
+  constrained `runPreContextQuery`-style helper now or it gets rediscovered at wiring time. **Three
+  Minor:** (F3) set `statement_timeout` on the runtime pool before prod [P7/P1-03]; (F4) at-least-once
+  residual — commit-before-response is right but does not achieve exactly-once, so non-idempotent
+  writes need idempotency keys [P1-04+]; (F5) the concurrency test proves reuse+zero-leaks but never
+  asserts cross-tenant reuse on the same PID — corroboration-strength, sharpen it. *Objection tried
+  ("Block — soft one-way handler contract with the F1 ambiguity baked in at the chokepoint every future
+  handler inherits") and why it fails:* zero handlers exist against it yet, no data lands on it, F1 is a
+  one-file fix with the reversibility window open now, and every isolation guarantee the task had to
+  prove is verified sound — Endorse-with-changes, not Block. Same-model self-review flagged: pressed
+  hardest on `release(err)` (verified against the library source, not memory) and the `{status,body}`
+  duck-typing (the convenient shortcut my model family writes unquestioned). See
+  `CRITIQUES/018-d016-context-middleware-pool.md`.

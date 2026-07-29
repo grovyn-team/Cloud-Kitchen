@@ -50,7 +50,25 @@ function startServer() {
   return new Promise((resolve, reject) => {
     serverProcess = spawn('node', ['src/server.js'], {
       cwd: BACKEND_ROOT,
-      env: { ...process.env, PORT: String(PORT) },
+      env: {
+        ...process.env,
+        PORT: String(PORT),
+        // This suite is DB-free by design (P1-01/02/03's note: "must keep
+        // passing without Postgres available") and only exercises the
+        // demo/seed login path (P1-08), never real DB-backed auth. P1-04
+        // wired `src/db/pool.js` (which throws at import if unset) and
+        // `SESSION_SECRET` (which now fails config import if unset) into the
+        // module graph `src/app.js` always loads, so both need a
+        // syntactically valid value for the process to boot at all --
+        // `pg.Pool` only opens a real connection lazily, on first query,
+        // which this suite never triggers. AUTH_DEMO_MODE=true is what
+        // mounts the demo login route this suite actually calls (P1-04
+        // moved it off the now-real `/auth/login`; see the `demo-login`
+        // calls below).
+        SESSION_SECRET: process.env.SESSION_SECRET || 'verify-suite-not-a-real-secret',
+        DATABASE_APP_URL: process.env.DATABASE_APP_URL || 'postgresql://unused:unused@localhost:5432/unused',
+        AUTH_DEMO_MODE: 'true',
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stderr = '';
@@ -330,9 +348,9 @@ async function main() {
   }
 
   try {
-    const loginRes = await post(`${BASE}/api/v1/auth/login`, { email: 'verify@test.com', password: DEMO_PASSWORD, role: 'ADMIN' });
-    assertOk(loginRes.status === 200, '/api/v1/auth/login', `expected 200 got ${loginRes.status}`);
-    assertOk(loginRes.data.sessionToken, '/api/v1/auth/login', 'sessionToken present');
+    const loginRes = await post(`${BASE}/api/v1/auth/demo-login`, { email: 'verify@test.com', password: DEMO_PASSWORD, role: 'ADMIN' });
+    assertOk(loginRes.status === 200, '/api/v1/auth/demo-login', `expected 200 got ${loginRes.status}`);
+    assertOk(loginRes.data.sessionToken, '/api/v1/auth/demo-login', 'sessionToken present');
     const authToken = loginRes.data.sessionToken;
 
     const storesRes = await get(`${BASE}/api/v1/stores`, authToken);
@@ -352,7 +370,7 @@ async function main() {
     await new Promise((r) => setTimeout(r, 1500));
 
     await startServer();
-    const loginRes2 = await post(`${BASE}/api/v1/auth/login`, { email: 'verify@test.com', password: DEMO_PASSWORD, role: 'ADMIN' });
+    const loginRes2 = await post(`${BASE}/api/v1/auth/demo-login`, { email: 'verify@test.com', password: DEMO_PASSWORD, role: 'ADMIN' });
     const authToken2 = loginRes2.data.sessionToken;
     const snapshot2 = await captureDeterminismSnapshot(authToken2);
     compareDeterminism(snapshot1, snapshot2);

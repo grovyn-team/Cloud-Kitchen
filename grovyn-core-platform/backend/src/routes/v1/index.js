@@ -5,8 +5,10 @@
 
 import { Router } from 'express';
 import { authOptional, requireAuth, requireRole, requireStoreAccess } from '../../middleware/authMiddleware.js';
+import { requireSession } from '../../middleware/sessionAuth.js';
+import { pool } from '../../db/pool.js';
 import { getHealth } from '../health.js';
-import { login, getStoreOptions } from '../auth.js';
+import { login, refresh, logout, me, demoLogin, getDemoStoreOptions } from '../auth.js';
 import { getCities } from './cities.js';
 import { getStores } from './stores.js';
 import { getBrands } from './brands.js';
@@ -48,10 +50,24 @@ const adminOrStaff = [authOptional, requireAuth, requireRole(['ADMIN', 'STAFF'])
 
 // Public (no auth)
 router.get(`${prefix}/health`, getHealth);
-router.get(`${prefix}/auth/stores`, getStoreOptions);
 // OPTIONS preflight for CORS from https://autopilot.grovyn.in
 router.options(`${prefix}/auth/login`, (_req, res) => res.sendStatus(200));
-router.post(`${prefix}/auth/login`, login);
+
+// Real auth (P1-04) -- login is pre-context by construction (see
+// ../auth.js); refresh/logout/me require a verified session first, then
+// compose with the ordinary withTenantContext(pool) pattern.
+router.post(`${prefix}/auth/login`, login(pool));
+router.post(`${prefix}/auth/refresh`, requireSession(pool), refresh(pool));
+router.post(`${prefix}/auth/logout`, requireSession(pool), logout(pool));
+router.get(`${prefix}/auth/me`, requireSession(pool), me(pool));
+
+// Demo/seed login (P1-08) -- mounted ONLY when AUTH_DEMO_MODE=true (default
+// false). When disabled these routes do not exist at all (404), not merely
+// return a denial -- "genuinely unreachable", not "off by convention".
+if (config.auth.demoModeEnabled) {
+  router.get(`${prefix}/auth/demo-stores`, getDemoStoreOptions);
+  router.post(`${prefix}/auth/demo-login`, demoLogin);
+}
 
 // Core data + store health + inventory + staff + alerts (ADMIN or STAFF; STAFF filtered in handlers)
 router.get(`${prefix}/cities`, ...adminOrStaff, getCities);
