@@ -90,4 +90,15 @@ export const apiPaths = {
     const qs = q.toString();
     return qs ? `/api/v1/inventory/items?${qs}` : '/api/v1/inventory/items';
   },
+  customers: '/api/v1/customers',
+  customerById: (id: string) => `/api/v1/customers/${id}`,
+  customersList: (params: { branchId?: string; category?: string; page?: number; pageSize?: number }) => {
+    const q = new URLSearchParams();
+    if (params.branchId) q.set('branchId', params.branchId);
+    if (params.category) q.set('category', params.category);
+    if (params.page) q.set('page', String(params.page));
+    if (params.pageSize) q.set('pageSize', String(params.pageSize));
+    const qs = q.toString();
+    return qs ? `/api/v1/customers?${qs}` : '/api/v1/customers';
+  },
 } as const;

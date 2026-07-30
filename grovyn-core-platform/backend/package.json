@@ -13,6 +13,8 @@
     "test:auth": "node tests/auth.pgtest.mjs",
     "test:sales": "node tests/sales.pgtest.mjs",
     "test:inventory": "node tests/inventory.pgtest.mjs",
+    "test:customers": "node tests/customers.pgtest.mjs",
+    "test:staff-management": "node tests/staffManagement.pgtest.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate"
   },

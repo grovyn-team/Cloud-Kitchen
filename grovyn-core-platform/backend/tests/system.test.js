@@ -130,12 +130,20 @@ async function testHealthAndCore(token) {
   assertOk(data.timestamp != null, '/api/v1/health', 'timestamp exists');
   assertOk(data.version != null, '/api/v1/health', 'version exists');
 
+  // `/api/v1/customers` removed from this list (P3 backend, 2026-07-30): the
+  // legacy in-memory mock this smoke test exercised is no longer mounted at
+  // that path -- `GET /api/v1/customers` is now the real DB-backed Customers
+  // module (`routes/customers.js`), which requires `requireSession` + a live
+  // Postgres connection and therefore cannot be smoke-tested here, same as
+  // `/api/v1/sales`/`/api/v1/inventory/items` (the other real DB-backed
+  // modules) were never added to this no-DB list either -- see
+  // `backend/tests/{sales,inventory,customers}.pgtest.mjs` for the real,
+  // DB-backed verification of this module instead.
   const coreEndpoints = [
     '/api/v1/cities',
     '/api/v1/stores',
     '/api/v1/brands',
     '/api/v1/skus',
-    '/api/v1/customers',
     '/api/v1/orders',
   ];
   for (const path of coreEndpoints) {

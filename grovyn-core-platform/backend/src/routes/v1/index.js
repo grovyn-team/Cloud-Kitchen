@@ -20,11 +20,26 @@ import {
   listItems as listInventoryItems,
   getItem as getInventoryItem,
 } from '../inventoryManagement.js';
+import {
+  createCustomer,
+  updateCustomer,
+  deleteCustomer,
+  listCustomers,
+  getCustomer,
+} from '../customers.js';
+import {
+  createStaff,
+  listStaff,
+  getStaffDetail,
+  updateStaff,
+  deactivateStaff,
+  grantStaffBranchAccess,
+  revokeStaffBranchAccess,
+} from '../staffManagement.js';
 import { getCities } from './cities.js';
 import { getStores } from './stores.js';
 import { getBrands } from './brands.js';
 import { getSkus } from './skus.js';
-import { getCustomers } from './customers.js';
 import { getOrders } from './orders.js';
 import { getAllStoreHealth, getStoreHealthById } from '../storeHealth.js';
 import { getAggregators, getAggregatorInsights } from '../aggregators.js';
@@ -85,7 +100,6 @@ router.get(`${prefix}/cities`, ...adminOrStaff, getCities);
 router.get(`${prefix}/stores`, ...adminOrStaff, getStores);
 router.get(`${prefix}/brands`, ...adminOrStaff, getBrands);
 router.get(`${prefix}/skus`, ...adminOrStaff, getSkus);
-router.get(`${prefix}/customers`, ...adminOrStaff, getCustomers);
 router.get(`${prefix}/orders`, ...adminOrStaff, getOrders);
 router.get(`${prefix}/store-health`, ...adminOrStaff, getAllStoreHealth);
 router.get(`${prefix}/stores/:id/health`, ...adminOrStaff, requireStoreAccess('id'), getStoreHealthById);
@@ -157,5 +171,48 @@ router.get(`${prefix}/simulate`, ...adminOnly, getSimulate);
 router.get(`${prefix}/expansion/simulate`, ...adminOnly, getExpansionSimulate);
 router.get(`${prefix}/customers/segments`, ...adminOnly, getCustomerSegments);
 router.get(`${prefix}/skus/margin-analysis`, ...adminOnly, getSkusMarginAnalysis);
+
+// Customers (P3 backend, 2026-07-30) -- real DB-backed module, same
+// requireSession/requireRole(sessionAuth.js) model as Sales/Inventory, NOT
+// the legacy authMiddleware.js HMAC scheme. Branch scope enforced inside
+// each handler (branchId arrives via body/query, not a route :param) via
+// isBranchAllowed(), same as Sales/Inventory. Replaces the legacy in-memory
+// `GET /api/v1/customers` mock (`routes/v1/customers.js`, no longer mounted
+// here) -- see `routes/customers.js`'s own doc comment for why this module's
+// brief reuses that exact path instead of a collision-avoiding sub-path.
+// Mounted AFTER `${prefix}/customers/segments` above (registration order
+// matters in Express for two GET routes under the same prefix): a request
+// for `/customers/segments` must match that literal route, not fall through
+// to `GET /customers/:id` matching "segments" as the id param -- same
+// import-before-:id / rollup-before-:id ordering discipline
+// `routes/v1/index.js` already uses for Sales/Inventory.
+const customersAuth = [requireSession(pool), requireSessionRole(['ADMIN', 'STAFF'])];
+router.post(`${prefix}/customers`, ...customersAuth, createCustomer(pool));
+router.patch(`${prefix}/customers/:id`, ...customersAuth, updateCustomer(pool));
+router.delete(`${prefix}/customers/:id`, ...customersAuth, deleteCustomer(pool));
+router.get(`${prefix}/customers`, ...customersAuth, listCustomers(pool));
+router.get(`${prefix}/customers/:id`, ...customersAuth, getCustomer(pool));
+
+// Staff management (P3 backend, 2026-07-30) -- real DB-backed module,
+// ADMIN-ONLY (requireSession/requireRole(['ADMIN']) from sessionAuth.js, NOT
+// the legacy authMiddleware.js HMAC scheme). Mounted under
+// `/staff/accounts` rather than the brief's literal `/staff` -- that exact
+// path is already the legacy in-memory workforce-snapshot mock
+// (`GET /api/v1/staff` above, ADMIN-or-STAFF) and IS consumed by the
+// frontend (`apiPaths.staff`) -- see `routes/staffManagement.js`'s own doc
+// comment for the full collision-avoidance rationale (same move
+// `/inventory/items` already made for Inventory).
+const staffMgmtAuth = [requireSession(pool), requireSessionRole(['ADMIN'])];
+router.post(`${prefix}/staff/accounts`, ...staffMgmtAuth, createStaff(pool));
+router.get(`${prefix}/staff/accounts`, ...staffMgmtAuth, listStaff(pool));
+router.get(`${prefix}/staff/accounts/:id`, ...staffMgmtAuth, getStaffDetail(pool));
+router.patch(`${prefix}/staff/accounts/:id`, ...staffMgmtAuth, updateStaff(pool));
+router.delete(`${prefix}/staff/accounts/:id`, ...staffMgmtAuth, deactivateStaff(pool));
+router.post(`${prefix}/staff/accounts/:id/branches`, ...staffMgmtAuth, grantStaffBranchAccess(pool));
+router.delete(
+  `${prefix}/staff/accounts/:id/branches/:branchId`,
+  ...staffMgmtAuth,
+  revokeStaffBranchAccess(pool)
+);
 
 export default router;

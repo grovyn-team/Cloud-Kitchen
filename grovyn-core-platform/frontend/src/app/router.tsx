@@ -38,7 +38,7 @@ const routes: RouteObject[] = [
       },
       {
         path: 'operations',
-        element: <RequireRole roles={['STAFF']}><Operations /></RequireRole>,
+        element: <RequireRole roles={['ADMIN', 'STAFF']}><Operations /></RequireRole>,
       },
       {
         path: 'sales',
@@ -49,8 +49,11 @@ const routes: RouteObject[] = [
         element: <RequireRole roles={['ADMIN']}><Finance /></RequireRole>,
       },
       {
+        // Path kept as 'repeat' (legacy) — page now covers real Customers
+        // CRUD (ADMIN+STAFF, branch-scoped) plus the AI segments panel
+        // (ADMIN-only, gated inside the page itself).
         path: 'repeat',
-        element: <RequireRole roles={['ADMIN']}><RepeatEngine /></RequireRole>,
+        element: <RequireRole roles={['ADMIN', 'STAFF']}><RepeatEngine /></RequireRole>,
       },
       {
         path: 'simulator',

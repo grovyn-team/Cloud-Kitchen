@@ -216,6 +216,50 @@ export interface CustomerSegmentsData {
   churnRisks: ChurnRisk[];
 }
 
+export interface CustomerCreatePayload {
+  branchId: string;
+  name: string;
+  phone?: string;
+  email?: string;
+  category?: string;
+  rating?: number;
+  notes?: string;
+}
+
+export interface CustomerUpdatePayload {
+  name?: string;
+  phone?: string | null;
+  email?: string | null;
+  category?: string | null;
+  rating?: number | null;
+  notes?: string | null;
+}
+
+export interface Customer {
+  id: string;
+  branchId: string;
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  category?: string | null;
+  rating?: number | null;
+  notes?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  [key: string]: unknown;
+}
+
+export interface CustomerListMeta {
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export interface CustomerListResponse {
+  data: Customer[];
+  meta: CustomerListMeta;
+}
+
 export interface SaleLineItemInput {
   itemName: string;
   sku?: string;
@@ -342,6 +386,14 @@ export interface InventoryMovement {
 
 export interface InventoryItemDetail extends InventoryItem {
   recentMovements: InventoryMovement[];
+}
+
+export interface InventoryItemCreateResponse extends InventoryItem {
+  initialMovement: InventoryMovement | null;
+}
+
+export interface InventoryItemUpdateResponse extends InventoryItem {
+  movement: InventoryMovement | null;
 }
 
 export interface InventoryListMeta {
