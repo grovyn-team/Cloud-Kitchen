@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/auth/AuthContext';
 import { Card, CardContent } from '@/components/ui/card';
+import { StatusBadge } from '@/components/StatusBadge';
 import { ReadinessSection } from '@/components/simulator/ReadinessSection';
 import { LocationSelector } from '@/components/simulator/LocationSelector';
 import { ScenarioCards } from '@/components/simulator/ScenarioCards';
@@ -9,56 +10,8 @@ import { GrovynImpactCards } from '@/components/simulator/GrovynImpactCards';
 import { RiskGauge } from '@/components/simulator/RiskGauge';
 import { TimelineVisualization } from '@/components/simulator/TimelineVisualization';
 import { apiPaths } from '@/services/api';
-
-interface ExpansionData {
-  currentStores: number;
-  readiness: {
-    total: number;
-    criteria: Array<{ name: string; status: string; value: string }>;
-    blockers: string[];
-    warnings: string[];
-    recommendation: string;
-  };
-  topLocations: Array<{
-    id: string;
-    city: string;
-    zone: string;
-    demandDensity: number;
-    competitorCount: number;
-    cannibalizationRisk: number;
-    avgRentPerSqFt: number;
-    opportunityScore: number;
-    demandScore?: number;
-    competitionScore?: number;
-    cannibalizationScore?: number;
-  }>;
-  scenarios: Record<string, { name: string; newStores: number; timeline: number; locations: unknown[]; description: string }>;
-  selectedScenario: {
-    name: string;
-    newStores: number;
-    timeline: number;
-    locations: unknown[];
-    financials: {
-      setupCosts: { equipment: number; renovation: number; deposit: number; inventory: number; total: number };
-      totalSetupCost: number;
-      monthlyProjections: Array<{
-        month: number;
-        revenue: number;
-        cogs: number;
-        commission: number;
-        fixedCosts: number;
-        netProfit: number;
-        cumulative: number;
-        rampMultiplier: number;
-      }>;
-      breakevenMonth: number | string;
-      year1Revenue: number;
-      year1NetProfit: number;
-    };
-    grovynImpact: Array<{ feature: string; description: string; calculation: string; monthlyValue: number; annualValue: number }>;
-    risks: { overall: number; breakdown: Record<string, number> };
-  };
-}
+import { Info, XCircle } from 'lucide-react';
+import type { ExpansionPlanResponse, ExpansionScenarioKey } from '@/types/api';
 
 function formatIndianCurrency(n: number): string {
   const whole = Math.round(n);
@@ -80,17 +33,26 @@ function MetricCard({ label, value, change }: { label: string; value: string; ch
 }
 
 export function ScaleSimulator() {
-  const { api } = useAuth();
-  const [data, setData] = useState<ExpansionData | null>(null);
-  const [selectedScenario, setSelectedScenario] = useState('moderate');
+  const { api, role } = useAuth();
+  const [data, setData] = useState<ExpansionPlanResponse | null>(null);
+  const [selectedScenario, setSelectedScenario] = useState<ExpansionScenarioKey>('moderate');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
+  // This page is ADMIN-only (backend router mounts `GET /expansion/plan`
+  // behind `requireRole(['ADMIN'])`, 403s STAFF, and the route is already
+  // gated with `RequireRole roles={['ADMIN']}` in router.tsx). This is a
+  // defense-in-depth check, same pattern as `Finance.tsx`/`StaffManagement.tsx`,
+  // so this page never fetches cross-branch financial projections for a
+  // non-ADMIN session even if reached some other way.
+  const isAdmin = role === 'ADMIN';
+
   useEffect(() => {
+    if (!isAdmin) return;
     setLoading(true);
     setError(false);
     api
-      .get<ExpansionData>(apiPaths.expansionSimulate(selectedScenario))
+      .get<ExpansionPlanResponse>(apiPaths.expansionPlan({ scenario: selectedScenario }))
       .then((r) => {
         setData(r.data);
       })
@@ -99,7 +61,16 @@ export function ScaleSimulator() {
         setError(true);
       })
       .finally(() => setLoading(false));
-  }, [api, selectedScenario]);
+  }, [api, isAdmin, selectedScenario]);
+
+  if (!isAdmin) {
+    return (
+      <div className="flex min-h-[40vh] flex-col items-center justify-center gap-2 rounded-xl bg-card p-8 shadow-card">
+        <p className="font-medium text-foreground">Access denied.</p>
+        <p className="text-sm text-muted-foreground">You don’t have permission to view this page.</p>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -113,7 +84,10 @@ export function ScaleSimulator() {
     return (
       <div className="space-y-6">
         <h2 className="text-xl font-semibold text-foreground">Scale Simulator</h2>
-        <p className="text-muted-foreground">Unable to load expansion simulation. Please try again.</p>
+        <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-4">
+          <XCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-600" />
+          <p className="text-sm font-medium text-red-900">Unable to load the expansion plan. Please try again.</p>
+        </div>
       </div>
     );
   }
@@ -131,6 +105,24 @@ export function ScaleSimulator() {
       </div>
 
       <ReadinessSection readiness={data.readiness} currentStores={data.currentStores} />
+
+      {data.dataSource.repeatRatePctIsAssumed && (
+        <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
+          <Info className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <p className="text-sm font-medium text-amber-900">Repeat rate is assumed, not measured</p>
+              <StatusBadge variant="at_risk">Assumed</StatusBadge>
+            </div>
+            <p className="text-sm text-amber-900">
+              The "Retention" readiness criterion above uses an assumed {data.dataSource.repeatRatePct}% repeat rate.
+              Grovyn can't yet link individual customers to sales to compute a real repeat-order rate, so this is a
+              conservative placeholder, not a figure derived from your sales data — treat any expansion decision
+              driven by it accordingly.
+            </p>
+          </div>
+        </div>
+      )}
 
       {!isReady && !needsCaution && (
         <Card className="rounded-xl border-2 border-[#ef4444]/30 bg-[#ef4444]/5">
@@ -153,7 +145,11 @@ export function ScaleSimulator() {
         <>
           <LocationSelector locations={data.topLocations} currentStores={data.currentStores} />
 
-          <ScenarioCards scenarios={data.scenarios} selected={selectedScenario} onSelect={setSelectedScenario} />
+          <ScenarioCards
+            scenarios={data.scenarios}
+            selected={selectedScenario}
+            onSelect={(key) => setSelectedScenario(key as ExpansionScenarioKey)}
+          />
 
           <Card className="rounded-xl border border-border">
             <CardContent className="space-y-8 p-6">
@@ -191,7 +187,7 @@ export function ScaleSimulator() {
 
               <div>
                 <h3 className="mb-4 text-xl font-semibold text-foreground">Rollout timeline</h3>
-                <TimelineVisualization newStores={sel.newStores} timeline={sel.timeline} locations={sel.locations as Array<{ zone: string; city?: string }>} />
+                <TimelineVisualization newStores={sel.newStores} timeline={sel.timeline} locations={sel.locations} />
               </div>
             </CardContent>
           </Card>

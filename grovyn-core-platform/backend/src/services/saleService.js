@@ -302,6 +302,131 @@ export async function getSaleById(db, { id }) {
  * parser entirely -- the value is a plain 'YYYY-MM-DD' string on the wire,
  * unambiguous regardless of the server process's `TZ`.
  */
+/**
+ * P2-03/P2-04/P2-06 (dashboard/finance aggregation) — a single CURRENT-period
+ * revenue/order-count/AOV figure (e.g. "today's revenue", "this week's
+ * revenue"), NOT the full historical per-bucket breakdown `getRollup` above
+ * returns. A dashboard/finance summary tile wants one number for the
+ * period the caller selected, not every bucket back to the start of time --
+ * `getRollup` already computes exactly this shape (branch_id, periodStart,
+ * orderCount, revenue, aov) but GROUPs over ALL history, which is the wrong
+ * tool for a tile. This reuses `getRollup`'s exact technique (real SQL
+ * aggregation via `db.raw()`, same `$1`-bound `period`, same
+ * branchId/restrictBranchIds filter shape, same revenue/orderCount/aov
+ * derivation) rather than reinventing it, just with a WHERE window instead
+ * of an unbounded GROUP BY.
+ *
+ * Window: `[date_trunc(period, today), date_trunc(period, today) + 1 period)`
+ * -- half-open, computed entirely in SQL from `CURRENT_DATE` (the DB
+ * server's own clock/timezone, not Node's) so "today"/"this week"/
+ * "this month" is judged consistently regardless of which process computed
+ * it. No `date`-typed column is SELECTed back (only aggregates), so this
+ * does not hit the `pg` driver's local-timezone date-parsing gotcha
+ * `getRollup`'s own doc comment above documents -- nothing here needs the
+ * `::text` cast workaround for that reason.
+ *
+ * `period` MUST already be validated against `PERIODS` by the caller (same
+ * caveat as `getRollup`) -- it is still a bound parameter either way.
+ */
+export async function getCurrentPeriodSummary(db, { period, branchId, restrictBranchIds }) {
+  const params = [period];
+  let branchFilterSql = '';
+  if (branchId) {
+    branchFilterSql = 'AND branch_id = $2';
+    params.push(branchId);
+  } else if (Array.isArray(restrictBranchIds)) {
+    if (restrictBranchIds.length === 0) return { revenue: 0, orderCount: 0, aov: 0 };
+    branchFilterSql = 'AND branch_id = ANY($2::uuid[])';
+    params.push(restrictBranchIds);
+  }
+
+  const result = await db.raw(
+    `
+      SELECT
+        COUNT(*)::int AS "orderCount",
+        COALESCE(SUM(total_amount), 0)::numeric(14,2) AS "revenue"
+      FROM sale
+      WHERE deleted_at IS NULL
+        AND sale_date >= date_trunc($1, CURRENT_DATE::timestamp)::date
+        AND sale_date < (date_trunc($1, CURRENT_DATE::timestamp) + ('1 ' || $1)::interval)::date
+      ${branchFilterSql}
+    `,
+    params
+  );
+
+  const row = result.rows[0] || {};
+  const revenue = Number(row.revenue) || 0;
+  const orderCount = Number(row.orderCount) || 0;
+  return { revenue, orderCount, aov: orderCount > 0 ? round2(revenue / orderCount) : 0 };
+}
+
+/**
+ * P2-03/P2-04 admin "by-branch" dashboard view -- CURRENT-period
+ * revenue/orderCount/AOV for EVERY branch in the tenant, including branches
+ * with ZERO sales in the window (a zero-order branch is still a real row an
+ * admin's cross-branch view should show, not silently drop). This is why
+ * this is a fresh query rather than literally calling `getRollup` (which
+ * only emits rows for branches that HAVE at least one matching sale --
+ * `GROUP BY branch_id` over `sale` alone has nothing to group for a branch
+ * with no orders in the window) or `getCurrentPeriodSummary` per-branch in a
+ * loop (N+1 queries). Same real-SQL-aggregation style as both of those
+ * (window predicate identical to `getCurrentPeriodSummary` above): a
+ * `branch LEFT JOIN sale` with the period window pushed into the JOIN's
+ * `FILTER` clause (not a plain WHERE, which would turn the LEFT JOIN into an
+ * inner join and drop the zero-order branches it exists to keep) is the
+ * standard SQL idiom for "every row on the left, aggregated matches from the
+ * right." Both `branch` and `sale` are RLS-scoped tables under this
+ * already-tenant-scoped connection, so the join is tenant-confined the same
+ * way every other query in this module is -- no hand-written tenant_id
+ * predicate needed.
+ *
+ * ADMIN-only by construction of the route that calls this (an ADMIN has
+ * implicit all-branch access within their own tenant) -- no
+ * `restrictBranchIds` parameter here, unlike `getRollup`/
+ * `getCurrentPeriodSummary`; a STAFF-scoped version isn't a requirement this
+ * task states, and bolting on an unused filter would be speculative.
+ */
+export async function getBranchBreakdown(db, { period }) {
+  const result = await db.raw(
+    `
+      SELECT
+        b.id AS "branchId",
+        b.name AS "branchName",
+        COUNT(s.id) FILTER (
+          WHERE s.deleted_at IS NULL
+            AND s.sale_date >= date_trunc($1, CURRENT_DATE::timestamp)::date
+            AND s.sale_date < (date_trunc($1, CURRENT_DATE::timestamp) + ('1 ' || $1)::interval)::date
+        )::int AS "orderCount",
+        COALESCE(
+          SUM(s.total_amount) FILTER (
+            WHERE s.deleted_at IS NULL
+              AND s.sale_date >= date_trunc($1, CURRENT_DATE::timestamp)::date
+              AND s.sale_date < (date_trunc($1, CURRENT_DATE::timestamp) + ('1 ' || $1)::interval)::date
+          ),
+          0
+        )::numeric(14,2) AS "revenue"
+      FROM branch b
+      LEFT JOIN sale s ON s.branch_id = b.id
+      WHERE b.deleted_at IS NULL
+      GROUP BY b.id, b.name
+      ORDER BY b.name
+    `,
+    [period]
+  );
+
+  return result.rows.map((row) => {
+    const revenue = Number(row.revenue) || 0;
+    const orderCount = Number(row.orderCount) || 0;
+    return {
+      branchId: row.branchId,
+      branchName: row.branchName,
+      revenue,
+      orderCount,
+      aov: orderCount > 0 ? round2(revenue / orderCount) : 0,
+    };
+  });
+}
+
 export async function getRollup(db, { period, branchId, restrictBranchIds }) {
   const params = [period];
   let branchFilterSql = '';

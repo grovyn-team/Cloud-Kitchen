@@ -12,6 +12,7 @@ import { Sales } from '@/pages/Sales';
 import { Alerts } from '@/pages/Alerts';
 import { RepeatEngine } from '@/pages/RepeatEngine';
 import { ScaleSimulator } from '@/pages/ScaleSimulator';
+import { StaffManagement } from '@/pages/StaffManagement';
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   return <RequireRole roles={['ADMIN', 'STAFF']}>{children}</RequireRole>;
@@ -58,6 +59,13 @@ const routes: RouteObject[] = [
       {
         path: 'simulator',
         element: <RequireRole roles={['ADMIN']}><ScaleSimulator /></RequireRole>,
+      },
+      {
+        // ADMIN-only: real staff-account management (`/api/v1/staff/accounts`),
+        // not the legacy read-only workforce-snapshot mock (`apiPaths.staff`,
+        // surfaced in Operations.tsx's Insights tab), which is untouched.
+        path: 'staff',
+        element: <RequireRole roles={['ADMIN']}><StaffManagement /></RequireRole>,
       },
       {
         path: 'alerts',

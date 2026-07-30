@@ -251,13 +251,17 @@ async function testStaffAndWorkforce(token) {
 }
 
 // --- M6: Finance ---
+// `/api/v1/finance/summary` removed from this function (Dashboard+Finance
+// aggregation backend task, 2026-07-30): the legacy in-memory mock this
+// smoke test exercised is no longer mounted at that path -- it is now the
+// real DB-backed Finance summary (`routes/financeManagement.js`), which
+// requires `requireSession` + a live Postgres connection and therefore
+// cannot be smoke-tested here via the legacy demo-login HMAC token this
+// suite uses, same reasoning `/api/v1/customers` was removed from
+// `testHealthAndCore` above for (P3 backend, 2026-07-30) -- see
+// `backend/tests/dashboardFinance.pgtest.mjs` for the real, DB-backed
+// verification of this endpoint instead.
 async function testFinance(token) {
-  const { status, data } = await get(`${BASE}/api/v1/finance/summary`, token);
-  assertOk(status === 200, '/api/v1/finance/summary', '200');
-  assertOk(data.totalGrossRevenue > 0, '/api/v1/finance/summary', 'grossRevenue > 0');
-  assertOk(data.totalNetRevenue <= data.totalGrossRevenue, '/api/v1/finance/summary', 'netRevenue <= grossRevenue');
-  assertOk(typeof data.overallMarginPercent === 'number', '/api/v1/finance/summary', 'marginPercent is number');
-
   for (const path of ['/api/v1/finance/stores', '/api/v1/finance/brands', '/api/v1/finance/skus']) {
     const res = await get(BASE + path, token);
     assertOk(res.data.data.length > 0, path, 'data not empty');
@@ -300,16 +304,17 @@ async function testAutopilot(token) {
 
 // --- Determinism: capture snapshot ---
 async function captureDeterminismSnapshot(token) {
-  const [brief, summary, storeHealth] = await Promise.all([
+  // `/api/v1/finance/summary` no longer fetched here -- same reason it was
+  // removed from `testFinance` above (real DB-backed endpoint, incompatible
+  // with this suite's legacy demo-login token).
+  const [brief, storeHealth] = await Promise.all([
     get(`${BASE}/api/v1/autopilot/executive-brief`, token).then((r) => r.data),
-    get(`${BASE}/api/v1/finance/summary`, token).then((r) => r.data),
     get(`${BASE}/api/v1/store-health`, token).then((r) => r.data),
   ]);
-  return { brief, summary, storeHealth };
+  return { brief, storeHealth };
 }
 
 const NUMERIC_TOLERANCE = 10; // allow small drift from float order of operations (e.g. sum order)
-const SUMMARY_TOLERANCE = 5000; // finance summary can drift slightly across server restarts (float order)
 
 function valuesMatch(a, b, tol = NUMERIC_TOLERANCE) {
   if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) <= tol;
@@ -332,7 +337,6 @@ function compareDeterminism(snap1, snap2) {
   try {
     assert.ok(snap1.brief?.generatedAt && snap2.brief?.generatedAt, 'executive-brief generatedAt present in both runs');
     assert.ok(snap1.brief?.businessSnapshot != null && snap2.brief?.businessSnapshot != null, 'executive-brief businessSnapshot present in both runs');
-    assert.ok(valuesMatch(snap1.summary, snap2.summary, SUMMARY_TOLERANCE), 'finance summary (same values within tolerance)');
     assert.deepStrictEqual(
       snap1.storeHealth.data.map((s) => ({ storeId: s.storeId, status: s.status })).sort((a, b) => a.storeId.localeCompare(b.storeId)),
       snap2.storeHealth.data.map((s) => ({ storeId: s.storeId, status: s.status })).sort((a, b) => a.storeId.localeCompare(b.storeId)),

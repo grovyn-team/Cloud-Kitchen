@@ -55,11 +55,72 @@ export interface Alert {
   evaluatedAt?: string;
 }
 
+/**
+ * `GET /api/v1/finance/summary` (ADMIN-only) — real DB-backed shape from
+ * `financeManagementService.getFinanceSummary`. Replaces the legacy mock
+ * shape (`totalGrossRevenue`/`totalNetRevenue`/`overallMarginPercent`) at
+ * the same URL — those fields no longer exist in the response.
+ *
+ * `cogs.isPartial` MUST be surfaced in the UI whenever true: only sale line
+ * items linked to an inventory item with a recorded cost-per-unit are
+ * counted, so `cogs.value`/`grossMarginEstimate` can understate true cost —
+ * never present `grossMarginEstimate` as a final/authoritative number when
+ * `cogs.isPartial` is true.
+ */
+export interface FinanceCogs {
+  value: number;
+  isPartial: boolean;
+  costedLineItemCount: number;
+  totalLineItemCount: number;
+  note: string;
+}
+
 export interface FinanceSummary {
-  totalGrossRevenue: number;
-  totalNetRevenue: number;
-  totalProfit: number;
-  overallMarginPercent: number;
+  period: RollupPeriod;
+  branchId: string | null;
+  revenue: number;
+  orderCount: number;
+  taxCollected: number;
+  cogs: FinanceCogs;
+  grossMarginEstimate: number;
+}
+
+/**
+ * `GET /api/v1/dashboard/summary` — reachable by ADMIN or STAFF, but the
+ * response shape genuinely differs by role (`dashboardService.serializeSummary`):
+ * a STAFF caller's object has NO `revenue`/`aov` KEYS at all (not `0`, not
+ * `null` — structurally absent). Always check `'revenue' in summary` (or the
+ * `hasDashboardRevenue` guard below) before rendering a financial tile —
+ * never assume the field exists.
+ */
+export interface DashboardSummary {
+  period: RollupPeriod;
+  branchId: string | null;
+  orderCount: number;
+  lowStockCount: number;
+  unresolvedNotificationCount: number;
+  revenue?: number;
+  aov?: number;
+}
+
+export function hasDashboardRevenue(
+  s: DashboardSummary
+): s is DashboardSummary & { revenue: number; aov: number } {
+  return 'revenue' in s && 'aov' in s;
+}
+
+/** `GET /api/v1/dashboard/by-branch` — ADMIN-only; do not call for STAFF. */
+export interface DashboardByBranchRow {
+  branchId: string;
+  branchName?: string;
+  revenue: number;
+  orderCount: number;
+  aov: number;
+}
+
+export interface DashboardByBranchResponse {
+  period: RollupPeriod;
+  data: DashboardByBranchRow[];
 }
 
 export interface PaginatedResponse<T> {
@@ -437,6 +498,244 @@ export interface InventoryRequestResult {
   relatedEntityId?: string | null;
   status: string;
   createdAt: string;
+}
+
+export interface StaffAccountCreatePayload {
+  email: string;
+  name: string;
+  password: string;
+  role: Role;
+  branchIds?: string[];
+}
+
+export interface StaffAccountUpdatePayload {
+  name?: string;
+  role?: Role;
+}
+
+export interface StaffAccount {
+  id: string;
+  email: string;
+  name: string;
+  role: Role;
+  activeBranchCount: number;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface StaffBranchAssignment {
+  id: string;
+  branchId: string;
+  branchName: string;
+  grantedAt: string;
+}
+
+export interface StaffAccountDetail {
+  id: string;
+  email: string;
+  name: string;
+  role: Role;
+  createdAt?: string;
+  updatedAt?: string;
+  branchAssignments: StaffBranchAssignment[];
+}
+
+export interface StaffAccountListMeta {
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export interface StaffAccountListResponse {
+  data: StaffAccount[];
+  meta: StaffAccountListMeta;
+}
+
+export interface StaffBranchGrantResponse {
+  id: string;
+  userId: string;
+  branchId: string;
+  grantedAt: string;
+  reactivated: boolean;
+  alreadyActive: boolean;
+}
+
+export type NotificationStatus = 'unread' | 'read' | 'resolved';
+
+export interface Notification {
+  id: string;
+  branchId: string;
+  type: string;
+  title: string;
+  message: string;
+  actorUserId?: string | null;
+  relatedEntityType?: string | null;
+  relatedEntityId?: string | null;
+  status: NotificationStatus;
+  resolvedByUserId?: string | null;
+  resolvedAt?: string | null;
+  createdAt: string;
+}
+
+export interface NotificationListMeta {
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export interface NotificationListResponse {
+  data: Notification[];
+  meta: NotificationListMeta;
+}
+
+export interface ExpansionReadinessCriterion {
+  name: string;
+  status: string;
+  value: string;
+}
+
+export interface ExpansionReadiness {
+  total: number;
+  criteria: ExpansionReadinessCriterion[];
+  blockers: string[];
+  warnings: string[];
+  recommendation: string;
+}
+
+export interface ExpansionLocation {
+  id: string;
+  city: string;
+  zone: string;
+  demandDensity: number;
+  competitorCount: number;
+  cannibalizationRisk: number;
+  avgRentPerSqFt: number;
+  opportunityScore: number;
+  demandScore?: number;
+  competitionScore?: number;
+  cannibalizationScore?: number;
+}
+
+export interface ExpansionMonthProjection {
+  month: number;
+  revenue: number;
+  cogs: number;
+  commission: number;
+  fixedCosts: number;
+  netProfit: number;
+  cumulative: number;
+  rampMultiplier: number;
+}
+
+export interface ExpansionSetupCosts {
+  equipment: number;
+  renovation: number;
+  deposit: number;
+  inventory: number;
+  total: number;
+}
+
+export interface ExpansionFinancials {
+  setupCosts: ExpansionSetupCosts;
+  totalSetupCost: number;
+  monthlyProjections: ExpansionMonthProjection[];
+  breakevenMonth: number | string;
+  year1Revenue: number;
+  year1NetProfit: number;
+}
+
+export interface ExpansionGrovynImpact {
+  feature: string;
+  description: string;
+  calculation: string;
+  monthlyValue: number;
+  annualValue: number;
+}
+
+export interface ExpansionRisks {
+  overall: number;
+  breakdown: Record<string, number>;
+}
+
+export interface ExpansionScenario {
+  name: string;
+  newStores: number;
+  timeline: number;
+  locations: ExpansionLocation[];
+  description: string;
+}
+
+export interface ExpansionSelectedScenario extends ExpansionScenario {
+  financials: ExpansionFinancials;
+  grovynImpact: ExpansionGrovynImpact[];
+  risks: ExpansionRisks;
+}
+
+export interface ExpansionCostAssumptions {
+  setupCostPerStore: { equipment: number; renovation: number; deposit: number; inventory: number };
+  cogsPct: number;
+  commissionPct: number;
+  monthlyRentPerStore: number;
+  monthlyUtilitiesPerStore: number;
+  monthlyStaffCostPerStore: number;
+  currency: string;
+  locale: string;
+}
+
+export interface ExpansionDataSource {
+  avgMonthlyRevenuePerStore: number;
+  avgMarginPct: number;
+  avgMarginIsPartial: boolean;
+  unresolvedNotificationCount: number;
+  repeatRatePct: number;
+  repeatRatePctIsAssumed: boolean;
+}
+
+/**
+ * `GET /api/v1/expansion/plan` (ADMIN-only) — real DB-backed expansion plan
+ * from `expansionService.runExpansionPlan`. Supersedes the legacy in-memory
+ * mock at `/api/v1/expansion/simulate` (still mounted, untouched, unused by
+ * this page) at a deliberately different URL. Same overall shape the old
+ * mock returned (`currentStores`/`readiness`/`topLocations`/`scenarios`/
+ * `selectedScenario`) PLUS two additive blocks:
+ *  - `costAssumptions`: the resolved cost inputs actually used (query
+ *    override > tenant.settings.expansion > engine default).
+ *  - `dataSource`: flags what's real-measured vs. assumed. In particular
+ *    `dataSource.repeatRatePctIsAssumed` MUST be surfaced in the UI whenever
+ *    true — `sale` has no `customer_id` FK yet, so a true repeat-purchase
+ *    rate cannot be computed from real data; the repeat rate feeding the
+ *    Readiness "Retention" criterion is a conservative assumed default (or a
+ *    caller/tenant-supplied override), not a measured figure. Same honesty
+ *    posture as `FinanceCogs.isPartial` above — never present it as measured.
+ */
+export interface ExpansionPlanResponse {
+  currentStores: number;
+  readiness: ExpansionReadiness;
+  topLocations: ExpansionLocation[];
+  scenarios: Record<string, ExpansionScenario>;
+  selectedScenario: ExpansionSelectedScenario;
+  costAssumptions: ExpansionCostAssumptions;
+  dataSource: ExpansionDataSource;
+}
+
+export type ExpansionScenarioKey = 'conservative' | 'moderate' | 'aggressive';
+
+/** Query-param overrides for `GET /api/v1/expansion/plan` — see `backend/src/routes/expansion.js`'s doc comment for validation ranges. */
+export interface ExpansionPlanParams {
+  scenario?: ExpansionScenarioKey;
+  newStores?: number;
+  repeatRatePct?: number;
+  cogsPct?: number;
+  commissionPct?: number;
+  equipmentCostPerStore?: number;
+  renovationCostPerStore?: number;
+  depositCostPerStore?: number;
+  inventoryCostPerStore?: number;
+  monthlyRentPerStore?: number;
+  monthlyUtilitiesPerStore?: number;
+  monthlyStaffCostPerStore?: number;
+  currency?: string;
+  locale?: string;
 }
 
 export interface SkuMarginRow {

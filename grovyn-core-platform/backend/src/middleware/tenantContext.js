@@ -65,7 +65,9 @@
  * would misinterpret a legitimate data row that happens to own columns
  * named `status`/`body` (e.g. a support ticket) as an HTTP envelope. `reply`
  * brands its return value with a module-private `Symbol` that ordinary
- * application data can never accidentally produce.
+ * application data can never accidentally produce. A sibling `replyRaw()`
+ * (Tax/GST module, 2026-07-31) exists for the rare non-JSON response (a CSV
+ * download) -- same branding technique, see its own doc comment below.
  */
 
 import { createScopedDb } from '../db/dal.js';
@@ -106,6 +108,35 @@ export function reply(status, body) {
 
 function isReplyEnvelope(value) {
   return Boolean(value) && typeof value === 'object' && value[REPLY_ENVELOPE] === true;
+}
+
+/**
+ * Tax/GST module addition (2026-07-31) -- the first handler in this codebase
+ * that needs to send a non-JSON response body (`GET /api/v1/tax/export`'s
+ * CSV download). `reply()` above always calls `res.json(body)`, which is the
+ * right default for every other handler but would wrongly
+ * `JSON.stringify()` a CSV string (quoting it, breaking the file). Same
+ * branded-Symbol design as `reply()`/`REPLY_ENVELOPE` (CRITIQUE 018 F1) for
+ * the same reason -- so this can never be confused with ordinary application
+ * data that happens to own a `status`/`body`/`headers` property -- just a
+ * second envelope for a different terminal action (`res.send()` +
+ * explicit headers, instead of `res.json()`).
+ */
+const RAW_REPLY_ENVELOPE = Symbol('tenantContext.rawReplyEnvelope');
+
+/**
+ * @param {number} status HTTP status code.
+ * @param {string|Buffer} body raw response body -- sent via `res.send()`,
+ *   never JSON-serialized.
+ * @param {Record<string,string>} [headers] response headers to set before
+ *   sending (e.g. `Content-Type`, `Content-Disposition`).
+ */
+export function replyRaw(status, body, headers) {
+  return { [RAW_REPLY_ENVELOPE]: true, status, body, headers: headers || {} };
+}
+
+function isRawReplyEnvelope(value) {
+  return Boolean(value) && typeof value === 'object' && value[RAW_REPLY_ENVELOPE] === true;
 }
 
 /**
@@ -234,6 +265,12 @@ export function withTenantContext(pool) {
 
       if (result === undefined) {
         return res.status(204).end();
+      }
+      if (isRawReplyEnvelope(result)) {
+        for (const [key, value] of Object.entries(result.headers || {})) {
+          res.set(key, value);
+        }
+        return res.status(result.status).send(result.body);
       }
       if (isReplyEnvelope(result)) {
         return res.status(result.status).json(result.body);

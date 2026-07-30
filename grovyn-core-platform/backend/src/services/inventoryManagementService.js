@@ -465,6 +465,35 @@ export async function listItems(db, { branchId, staffBranchIds, lowStockOnly, pa
   return { data: rows.map(serializeItem), meta: { page, pageSize, total: count } };
 }
 
+/**
+ * Dashboard/finance aggregation support (P2-03/P2-04/P2-06) -- a lightweight
+ * COUNT of items currently at/below their own `lowStockThreshold`, same
+ * branch-scope split (`branchId` else `staffBranchIds`) as `listItems`
+ * above. Deliberately a separate COUNT-only query rather than
+ * `listItems({ lowStockOnly: true }).meta.total` -- that call also fetches
+ * and serializes a page of item rows the caller doesn't want for a single
+ * dashboard tile number.
+ */
+export async function getLowStockCount(db, { branchId, staffBranchIds }) {
+  const conditions = [
+    isNull(schema.inventoryItem.deletedAt),
+    sql`${schema.inventoryItem.lowStockThreshold} IS NOT NULL`,
+    sql`${schema.inventoryItem.currentStock} <= ${schema.inventoryItem.lowStockThreshold}`,
+  ];
+  if (branchId) {
+    conditions.push(eq(schema.inventoryItem.branchId, branchId));
+  } else if (Array.isArray(staffBranchIds)) {
+    if (staffBranchIds.length === 0) return 0;
+    conditions.push(inArray(schema.inventoryItem.branchId, staffBranchIds));
+  }
+
+  const [{ count }] = await db
+    .select({ count: sql`count(*)::int` })
+    .from(schema.inventoryItem)
+    .where(and(...conditions));
+  return count;
+}
+
 export async function getRecentMovements(db, { itemId, limit = 20 }) {
   return db
     .select()

@@ -1,184 +1,170 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/auth/AuthContext';
 import { MetricCard } from '@/components/MetricCard';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { StatusBadge } from '@/components/StatusBadge';
 import { apiPaths } from '@/services/api';
-import type {
-  FinanceSummary,
-  DashboardMetrics,
-  StoreProfitability,
-  SkuMarginRow,
-} from '@/types/api';
+import { Info, XCircle } from 'lucide-react';
+import type { FinanceSummary, RollupPeriod, Store } from '@/types/api';
+
+const PERIODS: { value: RollupPeriod; label: string }[] = [
+  { value: 'day', label: 'Day' },
+  { value: 'week', label: 'Week' },
+  { value: 'month', label: 'Month' },
+];
+
+const inputClass =
+  'h-9 w-56 rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50';
 
 export function Finance() {
-  const { api } = useAuth();
+  const { api, role } = useAuth();
+  const [period, setPeriod] = useState<RollupPeriod>('day');
+  const [branchId, setBranchId] = useState('');
+  const [branches, setBranches] = useState<Store[]>([]);
   const [summary, setSummary] = useState<FinanceSummary | null>(null);
-  const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
-  const [storeProfit, setStoreProfit] = useState<StoreProfitability[]>([]);
-  const [skuRows, setSkuRows] = useState<SkuMarginRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // This page is ADMIN-only (backend `financeMgmtAuth` 403s STAFF, and the
+  // route is already gated with `RequireRole roles={['ADMIN']}` in
+  // router.tsx). This is a defense-in-depth check so the page never fetches
+  // financial data for a non-ADMIN session even if reached some other way.
+  const isAdmin = role === 'ADMIN';
 
   useEffect(() => {
-    Promise.all([
-      api.get<FinanceSummary>(apiPaths.financeSummary).then((r) => r.data).catch(() => null),
-      api.get<{ metrics: DashboardMetrics }>(apiPaths.dashboard).then((r) => r.data?.metrics ?? null).catch(() => null),
-      api.get<{ data: StoreProfitability[] }>(apiPaths.financeStores).then((r) => r.data?.data ?? []).catch(() => []),
-      api.get<{ data: SkuMarginRow[] }>(apiPaths.skusMarginAnalysis).then((r) => r.data?.data ?? []).catch(() => []),
-    ]).then(([s, d, st, sk]) => {
-      setSummary(s ?? null);
-      setMetrics(d ?? null);
-      setStoreProfit(Array.isArray(st) ? st : []);
-      setSkuRows(Array.isArray(sk) ? sk : []);
-      setLoading(false);
+    if (!isAdmin) return;
+    api
+      .get<{ data: Store[] }>(apiPaths.stores)
+      .then((r) => setBranches(Array.isArray(r.data?.data) ? r.data.data : []))
+      .catch(() => setBranches([]));
+  }, [api, isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    setLoading(true);
+    setError(null);
+    api
+      .get<FinanceSummary>(apiPaths.financeSummary(period, branchId || undefined))
+      .then((r) => setSummary(r.data))
+      .catch(() => {
+        setSummary(null);
+        setError('Could not load the finance summary. Try again in a moment.');
+      })
+      .finally(() => setLoading(false));
+  }, [api, isAdmin, period, branchId]);
+
+  const branchNameById = useMemo(() => {
+    const m: Record<string, string> = {};
+    branches.forEach((b) => {
+      m[b.id] = b.name;
     });
-  }, [api]);
+    return m;
+  }, [branches]);
 
-  if (loading) {
+  if (!isAdmin) {
     return (
-      <div className="flex min-h-[200px] items-center justify-center">
-        <p className="text-muted-foreground">Loading…</p>
+      <div className="flex min-h-[40vh] flex-col items-center justify-center gap-2 rounded-xl bg-card p-8 shadow-card">
+        <p className="font-medium text-foreground">Access denied.</p>
+        <p className="text-sm text-muted-foreground">You don’t have permission to view this page.</p>
       </div>
     );
   }
-
-  if (!summary) {
-    return (
-      <div className="space-y-6">
-        <h2 className="text-xl font-semibold text-foreground">Finance</h2>
-        <p className="text-muted-foreground">Unable to load financial summary.</p>
-      </div>
-    );
-  }
-
-  const wowMargin = metrics?.wow?.marginDeltaPct ?? 0;
-  const wowCommission = metrics?.wow?.commissionDeltaPct ?? 0;
-  const commissionTotal = metrics?.last7?.commission ?? 0;
 
   return (
     <div className="space-y-6">
-      <h2 className="text-xl font-semibold text-foreground">Finance</h2>
-      <p className="text-sm text-muted-foreground">High-level view. Per-store and SKU margin analysis.</p>
-
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <MetricCard
-          title="Gross revenue"
-          value={`₹${Number(summary.totalGrossRevenue).toLocaleString()}`}
-        />
-        <MetricCard
-          title="Commission / fees lost"
-          value={`₹${Number(commissionTotal || (summary.totalGrossRevenue - summary.totalNetRevenue)).toLocaleString()}`}
-          subtitle={wowCommission !== 0 ? `${wowCommission >= 0 ? '+' : ''}${wowCommission.toFixed(1)}% WoW` : undefined}
-        />
-        <MetricCard
-          title="Net margin %"
-          value={`${Number(summary.overallMarginPercent).toFixed(1)}%`}
-          subtitle={wowMargin !== 0 ? `${wowMargin >= 0 ? '+' : ''}${wowMargin.toFixed(1)}% WoW` : undefined}
-        />
-        <MetricCard
-          title="Net earnings"
-          value={`₹${Number(summary.totalNetRevenue).toLocaleString()}`}
-        />
-      </div>
-
-      {storeProfit.length > 0 && (
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="mb-3 text-base font-semibold text-foreground">Per-store margin breakdown</h3>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {storeProfit.map((s) => {
-              const margin = s.marginPercent ?? 0;
-              return (
-                <Card key={s.storeId} className="rounded-xl border border-border">
-                  <CardContent className="p-4">
-                    <p className="mb-2 font-medium text-foreground">
-                      {s.storeName || s.storeId}
-                    </p>
-                    <div className="space-y-1 text-sm">
-                      <p className="flex justify-between text-muted-foreground">
-                        <span>Revenue</span>
-                        <span className="font-medium text-foreground">₹{Number(s.grossRevenue ?? 0).toLocaleString()}</span>
-                      </p>
-                      <p className="flex justify-between text-muted-foreground">
-                        <span>Net margin</span>
-                        <span className="font-medium text-foreground">{margin.toFixed(1)}%</span>
-                      </p>
-                    </div>
-                    <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                      <div
-                        className="h-full rounded-full bg-[#22c55e]"
-                        style={{ width: `${Math.min(100, margin)}%` }}
-                      />
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
+          <h2 className="text-xl font-semibold text-foreground">Finance</h2>
+          <p className="text-sm text-muted-foreground">
+            Revenue, tax collected, and cost of goods sold, aggregated from real sales data.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <select className={inputClass} value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+            <option value="">All branches</option>
+            {branches.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </select>
+          <div className="inline-flex gap-1 rounded-lg bg-muted p-1">
+            {PERIODS.map((p) => (
+              <Button
+                key={p.value}
+                type="button"
+                size="sm"
+                variant={period === p.value ? 'default' : 'ghost'}
+                onClick={() => setPeriod(p.value)}
+              >
+                {p.label}
+              </Button>
+            ))}
           </div>
         </div>
-      )}
+      </div>
 
-      {wowCommission > 0.2 && (
-        <Card className="overflow-hidden rounded-xl border-2 border-[#eab308]/40 bg-[#ef4444]/5">
-          <CardHeader>
-            <CardTitle className="text-base text-[#ef4444]">AI Commission Alert</CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Commission WoW change +{wowCommission.toFixed(1)}%. Consider shifting traffic to direct channel.
-            </p>
-          </CardHeader>
-          <CardContent>
-            <ul className="list-inside list-disc space-y-1 text-sm text-foreground">
-              <li>Shift traffic to direct channel (app/web)</li>
-              <li>Reprice low-margin items</li>
-              <li>Loyalty incentives to reduce aggregator share</li>
-            </ul>
-          </CardContent>
-        </Card>
-      )}
+      {loading ? (
+        <div className="flex min-h-[200px] items-center justify-center">
+          <p className="text-muted-foreground">Loading…</p>
+        </div>
+      ) : error ? (
+        <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-4">
+          <XCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-600" />
+          <p className="text-sm font-medium text-red-900">{error}</p>
+        </div>
+      ) : !summary ? (
+        <div className="rounded-2xl border border-border bg-card p-8 text-center shadow-card">
+          <p className="text-muted-foreground">No financial data yet for this {period}.</p>
+        </div>
+      ) : summary.orderCount === 0 ? (
+        <div className="rounded-2xl border border-border bg-card p-8 text-center shadow-card">
+          <p className="text-muted-foreground">
+            No sales recorded for {branchId ? branchNameById[branchId] ?? 'this branch' : 'any branch'} this {period}.
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <MetricCard
+              title="Revenue"
+              value={`₹${Number(summary.revenue).toLocaleString()}`}
+              subtitle={`${summary.orderCount} order${summary.orderCount !== 1 ? 's' : ''}`}
+            />
+            <MetricCard title="Tax collected" value={`₹${Number(summary.taxCollected).toLocaleString()}`} />
+            <MetricCard
+              title="Cost of goods sold"
+              value={`₹${Number(summary.cogs.value).toLocaleString()}`}
+              subtitle={
+                summary.cogs.isPartial
+                  ? `Partial — ${summary.cogs.costedLineItemCount} of ${summary.cogs.totalLineItemCount} line items have cost data`
+                  : `${summary.cogs.costedLineItemCount} of ${summary.cogs.totalLineItemCount} line items costed`
+              }
+            >
+              {summary.cogs.isPartial && (
+                <div className="mt-2">
+                  <StatusBadge variant="at_risk">Partial data</StatusBadge>
+                </div>
+              )}
+            </MetricCard>
+            <MetricCard
+              title="Gross margin (estimate)"
+              value={`₹${Number(summary.grossMarginEstimate).toLocaleString()}`}
+              subtitle={
+                summary.cogs.isPartial
+                  ? 'Estimate — COGS is incomplete, treat as a floor, not a final figure'
+                  : 'Estimate, not a GST-compliance-grade figure'
+              }
+            />
+          </div>
 
-      {skuRows.length > 0 && (
-        <Card className="rounded-xl border border-border">
-          <CardHeader>
-            <CardTitle className="text-base">SKU / Item margin</CardTitle>
-            <p className="text-sm text-muted-foreground">All items sorted by margin %</p>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border text-left text-muted-foreground">
-                    <th className="pb-2 pr-4 font-medium">Name</th>
-                    <th className="pb-2 pr-4 font-medium">Revenue</th>
-                    <th className="pb-2 pr-4 font-medium">Cost</th>
-                    <th className="pb-2 pr-4 font-medium">Commission</th>
-                    <th className="pb-2 pr-4 font-medium">Margin</th>
-                    <th className="pb-2 pr-4 font-medium">Margin %</th>
-                    <th className="pb-2 font-medium">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {skuRows.map((row) => (
-                    <tr key={row.skuId} className="border-b border-border/60">
-                      <td className="py-2 pr-4 font-medium text-foreground">{row.name}</td>
-                      <td className="py-2 pr-4">₹{row.revenue.toLocaleString()}</td>
-                      <td className="py-2 pr-4">₹{row.cost.toLocaleString()}</td>
-                      <td className="py-2 pr-4">₹{(row.commission ?? 0).toLocaleString()}</td>
-                      <td className="py-2 pr-4">₹{row.margin.toLocaleString()}</td>
-                      <td className="py-2 pr-4">{row.marginPercent.toFixed(1)}%</td>
-                      <td className="py-2">
-                        <span
-                          className={`rounded px-2 py-0.5 text-xs font-medium ${
-                            row.status === 'OK' ? 'bg-[#22c55e]/20 text-[#22c55e]' : 'bg-[#f59e0b]/20 text-[#f59e0b]'
-                          }`}
-                        >
-                          {row.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          {summary.cogs.isPartial && (
+            <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
+              <Info className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+              <p className="text-sm text-amber-900">{summary.cogs.note}</p>
             </div>
-          </CardContent>
-        </Card>
+          )}
+        </>
       )}
     </div>
   );

@@ -192,6 +192,22 @@ export const tenant = pgTable(
     branchLimit: integer('branch_limit').notNull().default(1),
     seatLimit: integer('seat_limit').notNull().default(5),
 
+    // --- P35-02 (Backend, 2026-07-30): small, freeform per-tenant config
+    // knob, deliberately NOT a dedicated table -- the only consumer today is
+    // the deterministic Expansion Planner's cost-assumption defaults (setup
+    // cost/store, COGS%, commission%, monthly rent/utilities/staff per
+    // store, currency/locale), which are a handful of caller-overridable
+    // numbers, not a first-class entity with its own lifecycle/audit needs.
+    // Namespaced (`{ expansion: {...} }`) so a future feature can add its
+    // own key without a migration. No CHECK/schema validation at the DB
+    // layer -- `expansionPlanner.resolveCostAssumptions()` validates/merges
+    // with defaults at read time, same "app validates, DB just stores"
+    // split every other jsonb-shaped input in this codebase uses
+    // (`audit_log.before_data`/`after_data`). Empty object is a valid/
+    // expected value (tenant has never overridden anything -- all-default
+    // path).
+    settings: jsonb('settings').notNull().default({}),
+
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 
@@ -1049,20 +1065,20 @@ export const taxPeriodSummary = pgTable(
     tenantId: uuid('tenant_id')
       .notNull()
       .references(() => tenant.id),
-    // KNOWN GAP, NOT FIXED HERE (2026-07-29): this is still a plain
-    // single-column FK to `branch.id`, unlike `sale`/`inventory_item`/
-    // `customer`/`notification`/`staff_branch_access`, which were hardened
-    // to a composite `(branch_id, tenant_id)` FK against `branch(id,
-    // tenant_id)` on 2026-07-29 (see `branch`'s `branch_id_tenant_id_unique`
-    // comment above and migration 0009). Out of scope for that fix per its
-    // own explicit table list (Sales-module-triggered, fast-mode); this
-    // table carries the identical cross-tenant FK-bypass exposure
-    // `saleService.js`'s `branchExistsInTenant` docstring describes and has
-    // no equivalent app-layer workaround today. Flagged for a follow-up
-    // migration, not resolved here.
-    branchId: uuid('branch_id')
-      .notNull()
-      .references(() => branch.id),
+    // FIXED (2026-07-31, Tax/GST module task): this was a plain single-column
+    // FK to `branch.id`, the one table left behind when `sale`/`inventory_item`/
+    // `customer`/`notification`/`staff_branch_access` were hardened to a
+    // composite `(branch_id, tenant_id)` FK against `branch(id, tenant_id)` on
+    // 2026-07-29 (see `branch`'s `branch_id_tenant_id_unique` comment above and
+    // migration 0009) -- flagged then as out-of-scope for that migration's own
+    // explicit table list, picked up here per that flag. No single-column
+    // `.references(() => branch.id)` here anymore -- the composite FK below
+    // (`tax_period_summary_branch_id_tenant_id_fk`) covers referential
+    // integrity for this column AND cross-checks it against `tenant_id` in the
+    // same constraint, closing the identical cross-tenant FK-bypass exposure
+    // `saleService.js`'s `branchExistsInTenant` docstring describes (see
+    // migration 0012).
+    branchId: uuid('branch_id').notNull(),
 
     periodStart: date('period_start').notNull(),
     periodEnd: date('period_end').notNull(),
@@ -1094,6 +1110,15 @@ export const taxPeriodSummary = pgTable(
     uniqueIndex('tax_period_summary_active_unique_idx')
       .on(table.tenantId, table.branchId, table.periodStart, table.periodEnd, table.gstRate)
       .where(sql`${table.deletedAt} IS NULL`),
+    // Composite-FK hardening (2026-07-31, Tax/GST module task) -- closes the
+    // gap flagged in this table's `branchId` comment above, same rationale/
+    // pattern as `sale_branch_id_tenant_id_fk`/`customer_branch_id_tenant_id_fk`
+    // etc. from migration 0009.
+    foreignKey({
+      columns: [table.branchId, table.tenantId],
+      foreignColumns: [branch.id, branch.tenantId],
+      name: 'tax_period_summary_branch_id_tenant_id_fk',
+    }),
     pgPolicy('tax_period_summary_tenant_isolation', {
       for: 'all',
       to: 'public',

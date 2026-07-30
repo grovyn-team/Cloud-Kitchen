@@ -36,6 +36,16 @@ import {
   grantStaffBranchAccess,
   revokeStaffBranchAccess,
 } from '../staffManagement.js';
+import {
+  listNotifications,
+  unreadCount as getUnreadNotificationCount,
+  markRead as markNotificationRead,
+  resolveNotification,
+} from '../notifications.js';
+import { getSummary as getDashboardSummary, getByBranch as getDashboardByBranch } from '../dashboard.js';
+import { getSummary as getRealFinanceSummary } from '../financeManagement.js';
+import { getSummary as getTaxSummary, getExport as getTaxExport } from '../tax.js';
+import { getExpansionPlan as getRealExpansionPlan } from '../expansion.js';
 import { getCities } from './cities.js';
 import { getStores } from './stores.js';
 import { getBrands } from './brands.js';
@@ -46,7 +56,6 @@ import { getAggregators, getAggregatorInsights } from '../aggregators.js';
 import { getInventory, getInventoryInsights } from '../inventory.js';
 import { getStaff, getWorkforceInsights } from '../staff.js';
 import {
-  getFinanceSummary,
   getStoreProfitability,
   getBrandProfitability,
   getSkuMargins,
@@ -152,7 +161,6 @@ router.get(`${prefix}/aggregators`, ...adminOnly, getAggregators);
 router.get(`${prefix}/aggregator-insights`, ...adminOnly, getAggregatorInsights);
 
 // Finance (ADMIN only)
-router.get(`${prefix}/finance/summary`, ...adminOnly, getFinanceSummary);
 router.get(`${prefix}/finance/stores`, ...adminOnly, getStoreProfitability);
 router.get(`${prefix}/finance/brands`, ...adminOnly, getBrandProfitability);
 router.get(`${prefix}/finance/skus`, ...adminOnly, getSkuMargins);
@@ -214,5 +222,98 @@ router.delete(
   ...staffMgmtAuth,
   revokeStaffBranchAccess(pool)
 );
+
+// Notifications (P4 backend, 2026-07-30) -- real DB-backed READER side of
+// the `notification` table (schema shipped 2026-07-29 alongside P2/P3/P3.5/
+// P6). Surfaces rows the Inventory module's PRODUCER side already writes
+// (low-stock trigger, staff restock request, `routes/inventoryManagement.js`)
+// -- this task builds no new trigger logic. Same requireSession/requireRole
+// (sessionAuth.js) model as Sales/Inventory/Customers/Staff, NOT the legacy
+// authMiddleware.js HMAC scheme. Branch scope enforced inside each handler
+// (branchId arrives via query, not a route :param) via isBranchAllowed(),
+// same as every other module here.
+// Resolve is ADMIN-only per this task's explicit split ("staff can mark
+// read but resolution is an admin action", matching the module's own
+// "staff -> admin request feed" framing) -- layered as an EXTRA
+// requireSessionRole(['ADMIN']) on top of the shared adminOrStaff-style
+// auth array, same composition style this file already uses for
+// `adminOnly`/`adminOrStaff` groups. `unread-count` is mounted before the
+// bare `GET /notifications` list only for readability -- Express has no
+// actual ordering ambiguity here (different path-segment shapes, no :id
+// param on either).
+const notificationsAuth = [requireSession(pool), requireSessionRole(['ADMIN', 'STAFF'])];
+router.get(`${prefix}/notifications/unread-count`, ...notificationsAuth, getUnreadNotificationCount(pool));
+router.get(`${prefix}/notifications`, ...notificationsAuth, listNotifications(pool));
+router.patch(`${prefix}/notifications/:id/read`, ...notificationsAuth, markNotificationRead(pool));
+router.patch(
+  `${prefix}/notifications/:id/resolve`,
+  ...notificationsAuth,
+  requireSessionRole(['ADMIN']),
+  resolveNotification(pool)
+);
+
+// Dashboard aggregation (P2-03/P2-04/P2-06 backend, 2026-07-30) -- real
+// DB-backed module, same requireSession/requireRole(sessionAuth.js) model as
+// Sales/Inventory/Customers/Notifications, NOT the legacy authMiddleware.js
+// HMAC scheme the OLD `GET /api/v1/dashboard` (AI-intelligence mock,
+// `routes/intelligence.js`, still mounted above, unrelated/untouched) uses.
+// No path collision: `/dashboard/summary` and `/dashboard/by-branch` are
+// distinct literal path strings from the legacy exact-match `/dashboard`
+// route -- Express does not treat the latter as a prefix of the former.
+// `/dashboard/summary` is reachable by ADMIN or STAFF (the handler itself
+// shapes the response per-role, see `routes/dashboard.js`'s doc comment);
+// `/dashboard/by-branch` is ADMIN-only, enforced HERE via an extra
+// `requireSessionRole(['ADMIN'])` layered on top, same composition style
+// already used for `resolveNotification` above.
+const dashboardAuth = [requireSession(pool), requireSessionRole(['ADMIN', 'STAFF'])];
+router.get(`${prefix}/dashboard/summary`, ...dashboardAuth, getDashboardSummary(pool));
+router.get(
+  `${prefix}/dashboard/by-branch`,
+  ...dashboardAuth,
+  requireSessionRole(['ADMIN']),
+  getDashboardByBranch(pool)
+);
+
+// Finance summary (P2-03/P2-06 backend, 2026-07-30) -- real DB-backed
+// module, ADMIN-ONLY (requireSession/requireRole(['ADMIN']) from
+// sessionAuth.js). SUPERSEDES the legacy in-memory mock previously mounted
+// at this exact path (see `routes/financeManagement.js`'s own doc comment
+// for the full collision-supersede rationale, same pattern P3's
+// `routes/customers.js` established for `GET /api/v1/customers`) -- the
+// legacy `getFinanceSummary` import/mount above was removed, not left
+// shadowed (Express would only ever reach the first-registered handler for
+// an identical method+path, so leaving both mounted would have silently
+// stranded this new one dead code).
+const financeMgmtAuth = [requireSession(pool), requireSessionRole(['ADMIN'])];
+router.get(`${prefix}/finance/summary`, ...financeMgmtAuth, getRealFinanceSummary(pool));
+
+// Tax / GST module (Phase 6 backend, 2026-07-31) -- real DB-backed,
+// ADMIN-ONLY (requireSession/requireRole(['ADMIN']) from sessionAuth.js,
+// same auth model as Finance -- D-007's CA-in-the-loop positioning treats
+// this as financial/compliance data, not a STAFF-facing feature). Computes
+// GST period summaries on-demand from `sale`/`sale_line_item` data and
+// upserts an idempotent cache row into `tax_period_summary` -- see
+// `routes/tax.js`'s own doc comment. `/tax/export` returns a CSV file (not
+// JSON) via the new `replyRaw()` envelope in `middleware/tenantContext.js`.
+const taxAuth = [requireSession(pool), requireSessionRole(['ADMIN'])];
+router.get(`${prefix}/tax/summary`, ...taxAuth, getTaxSummary(pool));
+router.get(`${prefix}/tax/export`, ...taxAuth, getTaxExport(pool));
+
+// Expansion planning (P35-01/P35-02 backend, 2026-07-30) -- real DB-backed,
+// deterministic (NO AI/HF calls anywhere in this path), ADMIN-ONLY
+// (requireSession/requireRole(['ADMIN']) from sessionAuth.js, same auth
+// model as Finance/Staff/Dashboard-by-branch). Deliberately mounted at
+// `/expansion/plan`, NOT `/expansion/simulate` -- that exact path above
+// (line ~177) is the pre-existing legacy mock-backed route
+// (`routes/intelligence.js#getExpansionSimulate`, still on the OLD
+// `authMiddleware.js` HMAC scheme, driven by in-memory
+// `storeService`/`metricsEngine`/`alertOrchestratorService`) and is left
+// completely untouched by this task -- see `routes/expansion.js`'s own doc
+// comment for the full collision-avoidance rationale (same pattern
+// `financeManagement.js`/`customers.js` established for their own
+// legacy-mock siblings, except this one does NOT supersede/replace the old
+// path since P35-03 (frontend) has not yet cut over).
+const expansionAuth = [requireSession(pool), requireSessionRole(['ADMIN'])];
+router.get(`${prefix}/expansion/plan`, ...expansionAuth, getRealExpansionPlan(pool));
 
 export default router;

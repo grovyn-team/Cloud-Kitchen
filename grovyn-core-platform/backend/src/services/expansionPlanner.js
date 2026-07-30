@@ -5,10 +5,77 @@
 
 import { expansionLocations } from '../data/expansionLocations.js';
 
-function formatCurrency(amount) {
-  return new Intl.NumberFormat('en-IN', {
+/**
+ * P35-02 (Backend, 2026-07-30) — the cost assumptions this engine was
+ * previously hardcoding (₹19L/store setup, 60% COGS, 25% commission, plus
+ * per-store monthly rent/utilities/staff and the `en-IN`/`INR` formatting
+ * locale). These are now DEFAULTS a caller (or a tenant's `tenant.settings`
+ * row) may override, not literals baked into `projectFinancials`/
+ * `calculateGrovynImpact` — every numeric value below is unchanged from what
+ * was previously hardcoded, so a request/tenant that supplies no overrides
+ * produces byte-identical output to before this task. `setupCostPerStore`
+ * intentionally stays broken into the same four categories the old code had
+ * (equipment/renovation/deposit/inventory) so `resolveCostAssumptions` can
+ * merge a partial override (e.g. only `equipment`) without discarding the
+ * other three.
+ */
+export const DEFAULT_COST_ASSUMPTIONS = Object.freeze({
+  setupCostPerStore: Object.freeze({
+    equipment: 1000000,
+    renovation: 400000,
+    deposit: 250000,
+    inventory: 250000,
+  }),
+  cogsPct: 0.6,
+  commissionPct: 0.25,
+  monthlyRentPerStore: 100000,
+  monthlyUtilitiesPerStore: 17500,
+  monthlyStaffCostPerStore: 175000,
+  currency: 'INR',
+  locale: 'en-IN',
+});
+
+/**
+ * Merge a caller-supplied (or tenant-settings-sourced) partial override with
+ * `DEFAULT_COST_ASSUMPTIONS`. Never trusts the shape of `overrides` beyond
+ * "plain object with some of these keys" — callers (route handlers) are
+ * responsible for numeric/range validation of individual fields before this
+ * runs; this function's job is only the default-merge, not validation, same
+ * route-validates/service-computes split the rest of this codebase uses.
+ * @param {object} [overrides]
+ */
+export function resolveCostAssumptions(overrides = {}) {
+  const o = overrides && typeof overrides === 'object' ? overrides : {};
+  const setupCostPerStore = {
+    ...DEFAULT_COST_ASSUMPTIONS.setupCostPerStore,
+    ...(o.setupCostPerStore && typeof o.setupCostPerStore === 'object' ? o.setupCostPerStore : {}),
+  };
+  return {
+    setupCostPerStore,
+    cogsPct: typeof o.cogsPct === 'number' ? o.cogsPct : DEFAULT_COST_ASSUMPTIONS.cogsPct,
+    commissionPct: typeof o.commissionPct === 'number' ? o.commissionPct : DEFAULT_COST_ASSUMPTIONS.commissionPct,
+    monthlyRentPerStore:
+      typeof o.monthlyRentPerStore === 'number' ? o.monthlyRentPerStore : DEFAULT_COST_ASSUMPTIONS.monthlyRentPerStore,
+    monthlyUtilitiesPerStore:
+      typeof o.monthlyUtilitiesPerStore === 'number'
+        ? o.monthlyUtilitiesPerStore
+        : DEFAULT_COST_ASSUMPTIONS.monthlyUtilitiesPerStore,
+    monthlyStaffCostPerStore:
+      typeof o.monthlyStaffCostPerStore === 'number'
+        ? o.monthlyStaffCostPerStore
+        : DEFAULT_COST_ASSUMPTIONS.monthlyStaffCostPerStore,
+    currency: typeof o.currency === 'string' && o.currency ? o.currency : DEFAULT_COST_ASSUMPTIONS.currency,
+    locale: typeof o.locale === 'string' && o.locale ? o.locale : DEFAULT_COST_ASSUMPTIONS.locale,
+  };
+}
+
+function formatCurrency(
+  amount,
+  { locale = DEFAULT_COST_ASSUMPTIONS.locale, currency = DEFAULT_COST_ASSUMPTIONS.currency } = {}
+) {
+  return new Intl.NumberFormat(locale, {
     style: 'currency',
-    currency: 'INR',
+    currency,
     maximumFractionDigits: 0,
   })
     .format(amount)
@@ -121,15 +188,25 @@ export function rankLocations(currentStores, allLocations) {
 }
 
 /**
- * Project financials for new stores with ramp-up
+ * Project financials for new stores with ramp-up.
+ * @param {number} newStoreCount
+ * @param {{avgMonthlyRevenue?: number}} avgStoreMetrics
+ * @param {Array} selectedLocations
+ * @param {object} [costAssumptions] resolved via `resolveCostAssumptions()` —
+ *   defaults to `DEFAULT_COST_ASSUMPTIONS` (the exact literals this function
+ *   used to hardcode) when the caller passes nothing, so existing callers
+ *   that don't yet pass a 4th argument are unaffected (P35-01/P35-02).
  */
-export function projectFinancials(newStoreCount, avgStoreMetrics, selectedLocations) {
+export function projectFinancials(
+  newStoreCount,
+  avgStoreMetrics,
+  selectedLocations,
+  costAssumptions = DEFAULT_COST_ASSUMPTIONS
+) {
+  const assumptions = costAssumptions || DEFAULT_COST_ASSUMPTIONS;
   const setupCostPerStore = {
-    equipment: 1000000,
-    renovation: 400000,
-    deposit: 250000,
-    inventory: 250000,
-    total: 1900000,
+    ...assumptions.setupCostPerStore,
+    total: Object.values(assumptions.setupCostPerStore).reduce((sum, v) => sum + (Number(v) || 0), 0),
   };
 
   const totalSetupCost = setupCostPerStore.total * newStoreCount;
@@ -140,11 +217,11 @@ export function projectFinancials(newStoreCount, avgStoreMetrics, selectedLocati
     const rampMultiplier = month <= 3 ? [0.3, 0.5, 0.7][month - 1] : 1.0;
     const monthlyGMV = targetMonthlyGMVPerStore * newStoreCount * rampMultiplier;
 
-    const cogs = monthlyGMV * 0.6;
-    const commission = monthlyGMV * 0.25;
-    const rent = 100000 * newStoreCount;
-    const utilities = 17500 * newStoreCount;
-    const staff = 175000 * newStoreCount;
+    const cogs = monthlyGMV * assumptions.cogsPct;
+    const commission = monthlyGMV * assumptions.commissionPct;
+    const rent = assumptions.monthlyRentPerStore * newStoreCount;
+    const utilities = assumptions.monthlyUtilitiesPerStore * newStoreCount;
+    const staff = assumptions.monthlyStaffCostPerStore * newStoreCount;
     const totalCosts = cogs + commission + rent + utilities + staff;
     const netProfit = monthlyGMV - totalCosts;
     const cumulativeProfit =
@@ -184,30 +261,42 @@ export function projectFinancials(newStoreCount, avgStoreMetrics, selectedLocati
 }
 
 /**
- * Calculate Grovyn Autopilot value (feature-linked)
+ * Calculate Grovyn Autopilot value (feature-linked).
+ * @param {number} newStoreCount
+ * @param {number} projectedGMV
+ * @param {object} [costAssumptions] only `cogsPct`/`currency`/`locale` are
+ *   read here — the feature-linked percentages (1.2%, 2.1%, 5.8%, 3.2%) are
+ *   Grovyn-product-value estimates, not the India-cost-constant scope this
+ *   task's P35-02 named, so they stay as-is. `cogsPct` (for the "Real-time
+ *   Inventory Alerts" line, which is a % reduction ON COGS) and the
+ *   currency/locale used to render `calculation` description strings ARE in
+ *   scope and now come from `assumptions` instead of a hardcoded `0.6`/
+ *   `en-IN`.
  */
-export function calculateGrovynImpact(newStoreCount, projectedGMV) {
+export function calculateGrovynImpact(newStoreCount, projectedGMV, costAssumptions = DEFAULT_COST_ASSUMPTIONS) {
+  const assumptions = costAssumptions || DEFAULT_COST_ASSUMPTIONS;
+  const fmt = (amount) => formatCurrency(amount, { locale: assumptions.locale, currency: assumptions.currency });
   const monthlyGMV = projectedGMV / 12;
 
   return [
     {
       feature: 'Commission Alerts',
       description: 'Detect platform fee spikes across all stores',
-      calculation: `1.2% of ${formatCurrency(monthlyGMV)}`,
+      calculation: `1.2% of ${fmt(monthlyGMV)}`,
       monthlyValue: Math.round(monthlyGMV * 0.012),
       annualValue: Math.round(monthlyGMV * 0.012 * 12),
     },
     {
       feature: 'Low-Margin SKU Detection',
       description: 'Flag and optimize money-losing items before they scale',
-      calculation: `2.1% margin improvement on ${formatCurrency(monthlyGMV)}`,
+      calculation: `2.1% margin improvement on ${fmt(monthlyGMV)}`,
       monthlyValue: Math.round(monthlyGMV * 0.021),
       annualValue: Math.round(monthlyGMV * 0.021 * 12),
     },
     {
       feature: 'AI Repeat Engine',
       description: 'Automated win-back campaigns for dormant customers',
-      calculation: `5.8% repeat lift = ${formatCurrency(monthlyGMV * 0.058)}`,
+      calculation: `5.8% repeat lift = ${fmt(monthlyGMV * 0.058)}`,
       monthlyValue: Math.round(monthlyGMV * 0.058),
       annualValue: Math.round(monthlyGMV * 0.058 * 12),
     },
@@ -222,8 +311,8 @@ export function calculateGrovynImpact(newStoreCount, projectedGMV) {
       feature: 'Real-time Inventory Alerts',
       description: 'Reduce wastage across multiple locations',
       calculation: '3.2% COGS reduction',
-      monthlyValue: Math.round(monthlyGMV * 0.6 * 0.032),
-      annualValue: Math.round(monthlyGMV * 0.6 * 0.032 * 12),
+      monthlyValue: Math.round(monthlyGMV * assumptions.cogsPct * 0.032),
+      annualValue: Math.round(monthlyGMV * assumptions.cogsPct * 0.032 * 12),
     },
   ];
 }

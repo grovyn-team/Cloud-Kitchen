@@ -15,6 +15,10 @@
     "test:inventory": "node tests/inventory.pgtest.mjs",
     "test:customers": "node tests/customers.pgtest.mjs",
     "test:staff-management": "node tests/staffManagement.pgtest.mjs",
+    "test:notifications": "node tests/notifications.pgtest.mjs",
+    "test:dashboard-finance": "node tests/dashboardFinance.pgtest.mjs",
+    "test:expansion": "node tests/expansion.pgtest.mjs",
+    "test:tax": "node tests/tax.pgtest.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate"
   },
