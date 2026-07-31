@@ -8,6 +8,7 @@ import { Stores } from '@/pages/Stores';
 import { StoreDetail } from '@/pages/StoreDetail';
 import { Operations } from '@/pages/Operations';
 import { Finance } from '@/pages/Finance';
+import { Tax } from '@/pages/Tax';
 import { Sales } from '@/pages/Sales';
 import { Alerts } from '@/pages/Alerts';
 import { RepeatEngine } from '@/pages/RepeatEngine';
@@ -48,6 +49,10 @@ const routes: RouteObject[] = [
       {
         path: 'finance',
         element: <RequireRole roles={['ADMIN']}><Finance /></RequireRole>,
+      },
+      {
+        path: 'tax',
+        element: <RequireRole roles={['ADMIN']}><Tax /></RequireRole>,
       },
       {
         // Path kept as 'repeat' (legacy) — page now covers real Customers

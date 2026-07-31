@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Store, DollarSign, AlertCircle, ChefHat, Users, TrendingUp, Receipt, UserCog } from 'lucide-react';
+import { LayoutDashboard, Store, DollarSign, AlertCircle, ChefHat, Users, TrendingUp, Receipt, UserCog, Percent } from 'lucide-react';
 import type { Role } from '@/types/api';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/auth/AuthContext';
@@ -19,6 +19,7 @@ const navItems: NavItem[] = [
   { to: '/sales', label: 'Sales', icon: <Receipt className="h-5 w-5" />, roles: ['ADMIN', 'STAFF'] },
   { to: '/operations', label: 'Operations', icon: <ChefHat className="h-5 w-5" />, roles: ['ADMIN', 'STAFF'] },
   { to: '/finance', label: 'Finance', icon: <DollarSign className="h-5 w-5" />, roles: ['ADMIN'] },
+  { to: '/tax', label: 'Tax (GST)', icon: <Percent className="h-5 w-5" />, roles: ['ADMIN'] },
   { to: '/repeat', label: 'Customers', icon: <Users className="h-5 w-5" />, roles: ['ADMIN', 'STAFF'] },
   { to: '/simulator', label: 'Scale Simulator', icon: <TrendingUp className="h-5 w-5" />, roles: ['ADMIN'] },
   { to: '/staff', label: 'Staff', icon: <UserCog className="h-5 w-5" />, roles: ['ADMIN'] },

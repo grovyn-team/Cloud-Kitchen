@@ -738,6 +738,25 @@ export interface ExpansionPlanParams {
   locale?: string;
 }
 
+/**
+ * `GET /api/v1/tax/summary` (ADMIN-only) — real DB-backed GST summary for a
+ * branch/period. `disclaimer` MUST be rendered prominently wherever this
+ * summary is shown (D-007) — this is a compliance-positioning requirement,
+ * not a footnote: the figures are prepared for CA review, not a certified
+ * filing, and the UI must not imply otherwise.
+ */
+export interface TaxSummary {
+  branchId: string | null;
+  periodStart: string;
+  periodEnd: string;
+  gstRate: number;
+  taxableAmount: number;
+  taxAmount: number;
+  saleCount: number;
+  computedAt: string;
+  disclaimer: string;
+}
+
 export interface SkuMarginRow {
   skuId: string;
   name: string;

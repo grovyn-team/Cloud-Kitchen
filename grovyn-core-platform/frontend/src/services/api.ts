@@ -173,4 +173,26 @@ export const apiPaths = {
     branchId ? `/api/v1/notifications/unread-count?branchId=${branchId}` : '/api/v1/notifications/unread-count',
   notificationMarkRead: (id: string) => `/api/v1/notifications/${id}/read`,
   notificationResolve: (id: string) => `/api/v1/notifications/${id}/resolve`,
+  // Real DB-backed GST summary/export (ADMIN-only). `periodStart`/`periodEnd`
+  // are required by the backend (`YYYY-MM-DD`); `branchId` omitted means
+  // all branches. See `TaxSummary` in `types/api.ts` for the response shape
+  // and its mandatory-disclaimer note.
+  taxSummary: (params: { branchId?: string; periodStart: string; periodEnd: string }) => {
+    const q = new URLSearchParams();
+    if (params.branchId) q.set('branchId', params.branchId);
+    q.set('periodStart', params.periodStart);
+    q.set('periodEnd', params.periodEnd);
+    return `/api/v1/tax/summary?${q.toString()}`;
+  },
+  // Downloads a CSV file — fetch with `responseType: 'blob'` via the
+  // authenticated `api` client (a plain `<a href>` can't attach the bearer
+  // token), then trigger the browser download from the blob.
+  taxExport: (params: { branchId?: string; periodStart: string; periodEnd: string; format?: string }) => {
+    const q = new URLSearchParams();
+    if (params.branchId) q.set('branchId', params.branchId);
+    q.set('periodStart', params.periodStart);
+    q.set('periodEnd', params.periodEnd);
+    q.set('format', params.format ?? 'csv');
+    return `/api/v1/tax/export?${q.toString()}`;
+  },
 } as const;
