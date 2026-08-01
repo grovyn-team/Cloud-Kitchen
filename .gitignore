@@ -1,0 +1,14 @@
+# Integration Task 5, round 3 — root-level .gitignore. The existing
+# .gitignore lives at grovyn-core-platform/.gitignore and only covers paths
+# under that directory; docker-compose.yml, .env, deployment/, and backups/
+# all live at the true repo root (one level above), which needed its own
+# coverage -- a real gap found while verifying nothing from this task's
+# testing would end up staged.
+
+.env
+.env.*
+!.env.example
+!**/.env.example
+
+# pg_dump output (Integration Task 6) -- real tenant data, never committed.
+backups/

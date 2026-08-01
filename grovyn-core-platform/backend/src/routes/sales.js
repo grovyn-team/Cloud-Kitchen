@@ -34,7 +34,8 @@ import {
   CsvRowLimitError,
 } from '../services/salesCsvImportService.js';
 import { logAuditEvent } from '../services/auditService.js';
-import { fetchTenantGstRateHistory } from '../services/gstRateService.js';
+import { fetchTenantGstRateHistory, NoGstRateConfiguredError } from '../services/gstRateService.js';
+import { resolveItemsForBranch, listAvailableItems } from '../services/inventoryAliasService.js';
 
 function badRequest(message, details) {
   return reply(400, { error: 'BadRequest', message, ...(details ? { details } : {}) });
@@ -46,6 +47,10 @@ function forbidden() {
 
 function notFound(message = 'Sale not found.') {
   return reply(404, { error: 'NotFound', message });
+}
+
+function conflict(message) {
+  return reply(409, { error: 'Conflict', message });
 }
 
 function clampInt(value, fallback, min, max) {
@@ -85,12 +90,25 @@ export function createSale(pool) {
       return badRequest('Invalid sale payload.', validation.errors);
     }
 
-    const sale = await saleService.createSale(db, {
-      tenantId: req.tenantId,
-      branchId,
-      createdByUserId: req.userId,
-      ...validation.value,
-    });
+    let sale;
+    try {
+      sale = await saleService.createSale(db, {
+        tenantId: req.tenantId,
+        branchId,
+        createdByUserId: req.userId,
+        ...validation.value,
+      });
+    } catch (err) {
+      // Integration Task 2, round 3 (fail-closed GST): no covering rate row
+      // is a tenant-provisioning gap, not a client input error -- 409 (not
+      // 500) so the client sees a clear, actionable message instead of a
+      // generic failure. Thrown before any write in `createSale` (the rate
+      // is resolved first), so nothing needs rolling back here.
+      if (err instanceof NoGstRateConfiguredError) {
+        return conflict(err.message);
+      }
+      throw err;
+    }
 
     await logAuditEvent(db, {
       tenantId: req.tenantId,
@@ -145,19 +163,36 @@ export function importSales(pool) {
     }
 
     const rateHistory = await fetchTenantGstRateHistory(db, req.tenantId);
+
+    // Integration Task 1, round 3: resolve every distinct item name in the
+    // file against this branch's alias/catalog map in ONE batch query pair
+    // (not one query per row) before validation runs -- an unresolved name
+    // becomes a row error inside validateAndBuildRows, same all-or-nothing
+    // posture as every other row-content problem.
+    const distinctItemNames = [
+      ...new Set(records.map((r) => (typeof r.itemName === 'string' ? r.itemName.trim() : '')).filter(Boolean)),
+    ];
+    const { resolved: resolvedItems } = await resolveItemsForBranch(db, { branchId, itemNames: distinctItemNames });
+
     const { validRows, errors } = validateAndBuildRows(records, {
       tenantId: req.tenantId,
       branchId,
       createdByUserId: req.userId,
       rateHistory,
+      resolvedItems,
     });
 
     // All-or-nothing: any row error means zero rows are committed. Nothing
     // has touched the DB yet at this point (parse + validate are both pure
     // in-memory steps), so there is nothing to roll back -- the batch insert
-    // below simply never runs.
+    // below simply never runs. `availableItems` (id + name) is included on
+    // every rejection (not only ones caused by an unmatched item name) so
+    // the UI can always offer "add an alias" without having to sniff error
+    // text -- cheap to include, and a caller only pays for it on the
+    // failure path.
     if (errors.length > 0) {
-      return reply(422, { importedCount: 0, errors });
+      const availableItems = await listAvailableItems(db, branchId);
+      return reply(422, { importedCount: 0, errors, availableItems });
     }
 
     const importBatchRef = crypto.randomUUID();

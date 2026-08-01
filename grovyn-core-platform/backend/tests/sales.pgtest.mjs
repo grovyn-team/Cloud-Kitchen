@@ -126,6 +126,40 @@ async function seed() {
       staffA1Id,
       BRANCH_A1,
     ]);
+
+    // Integration Task 2, round 3 (fail-closed GST): every tenant needs a
+    // resolvable rate before `saleService.createSale`/CSV import will write
+    // anything -- open-ended from well before any date this suite uses
+    // (including the 2031-01-01 atomicity-check date below).
+    await client.query(
+      `INSERT INTO tax_rate (tenant_id, rate_percent, effective_from, effective_to) VALUES ($1, 5.00, DATE '2000-01-01', NULL), ($2, 5.00, DATE '2000-01-01', NULL)`,
+      [TENANT_A, TENANT_B]
+    );
+
+    // Integration Task 1, round 3 (CSV -> inventory alias mapping): the CSV
+    // import tests below reference these three catalog item names by exact
+    // match, and one formula-injection payload via an explicit alias --
+    // seeded here so those rows resolve to a real `inventory_item` instead
+    // of failing as unmatched (which is what this task's alias-resolution
+    // requirement would otherwise correctly do to ANY unrecognized name).
+    const goodItem1Id = crypto.randomUUID();
+    const goodItem2Id = crypto.randomUUID();
+    const goodItem3Id = crypto.randomUUID();
+    await client.query(
+      `INSERT INTO inventory_item (id, tenant_id, branch_id, name, unit) VALUES
+         ($1, $4, $5, 'Good Item 1', 'unit'),
+         ($2, $4, $5, 'Good Item 2', 'unit'),
+         ($3, $4, $5, 'Good Item 3', 'unit')`,
+      [goodItem1Id, goodItem2Id, goodItem3Id, TENANT_A, BRANCH_A1]
+    );
+    // Alias the formula-injection payload itself to "Good Item 2" -- proves
+    // sanitization-on-storage still holds even when the malicious string is
+    // a legitimately resolvable alias, not just an arbitrary unmatched name.
+    await client.query(
+      `INSERT INTO inventory_item_alias (tenant_id, branch_id, inventory_item_id, alias_name) VALUES ($1, $2, $3, $4)`,
+      [TENANT_A, BRANCH_A1, goodItem2Id, "=cmd|'/c calc'!A1"]
+    );
+
     await client.query('COMMIT');
     console.log('[seed] sales fixture tenants seeded:', { adminAId, staffA1Id, adminBId });
   } catch (err) {
@@ -272,7 +306,11 @@ async function main() {
 
     // -----------------------------------------------------------------
     // Manual entry: happy path, server-computed totals, ignores a
-    // client-sent total, MAX line item cap, branch-scope enforcement.
+    // client-sent total AND a client-sent taxAmount (Integration Task 2,
+    // round 3: tax is always computed server-side from the effective GST
+    // rate -- 5.00% per this fixture's seeded `tax_rate` row -- a client can
+    // no longer supply one at all), MAX line item cap, branch-scope
+    // enforcement.
     // -----------------------------------------------------------------
     const createRes = await postJson(
       `${base}/api/v1/sales`,
@@ -280,7 +318,7 @@ async function main() {
         branchId: BRANCH_A1,
         saleDate: '2026-02-01',
         paymentMethod: 'cash',
-        taxAmount: 5,
+        taxAmount: 999999, // client-sent tax -- must be ignored (no longer even read)
         totalAmount: '999999.99', // client-sent total -- must be ignored
         lineItems: [
           { itemName: 'Veg Thali', quantity: 2, unitPrice: 150 },
@@ -291,11 +329,14 @@ async function main() {
     );
     check('Manual entry: staff creates sale in own branch -> 201', createRes.status === 201, createRes);
     const expectedSubtotal = (2 * 150 + 3 * 40).toFixed(2); // 420.00
-    const expectedTotal = (420 + 5).toFixed(2); // 425.00
+    const expectedTax = (420 * 0.05).toFixed(2); // 21.00, at the fixture's seeded 5% rate
+    const expectedTotal = (420 + Number(expectedTax)).toFixed(2); // 441.00
     check(
-      'Manual entry: header total computed server-side from line items (client-sent total ignored)',
-      createRes.data?.subtotalAmount === expectedSubtotal && createRes.data?.totalAmount === expectedTotal,
-      { got: createRes.data, expectedSubtotal, expectedTotal }
+      'Manual entry: header total computed server-side from line items + real GST rate (client-sent tax/total ignored)',
+      createRes.data?.subtotalAmount === expectedSubtotal &&
+        createRes.data?.taxAmount === expectedTax &&
+        createRes.data?.totalAmount === expectedTotal,
+      { got: createRes.data, expectedSubtotal, expectedTax, expectedTotal }
     );
     check('Manual entry: 2 line items returned', createRes.data?.lineItems?.length === 2, createRes.data);
     const createdSaleId = createRes.data?.id;
@@ -406,7 +447,10 @@ async function main() {
     // Rollup correctness against known seeded data.
     // -----------------------------------------------------------------
     const rollupDate = '2026-03-15';
-    // Two sales in BRANCH_A1 on the same day: 100 + 200 = 300 revenue, 2 orders, AOV 150.
+    // Two sales in BRANCH_A1 on the same day: subtotal 100 + 200 = 300, plus
+    // this fixture's seeded 5% GST -> revenue (total_amount) 315, 2 orders,
+    // AOV 157.50. Revenue is `sale.total_amount` (subtotal + real per-line
+    // tax as of Integration Task 2, round 3), not the pre-tax subtotal.
     await postJson(`${base}/api/v1/sales`, { branchId: BRANCH_A1, saleDate: rollupDate, lineItems: [{ itemName: 'R1', quantity: 1, unitPrice: 100 }] }, staffA1Token);
     await postJson(`${base}/api/v1/sales`, { branchId: BRANCH_A1, saleDate: rollupDate, lineItems: [{ itemName: 'R2', quantity: 1, unitPrice: 200 }] }, staffA1Token);
 
@@ -414,8 +458,8 @@ async function main() {
     check('Rollup: staff -> 200', rollupRes.status === 200, rollupRes);
     const rollupBucket = rollupRes.data?.data?.find((d) => d.periodStart?.startsWith(rollupDate));
     check(
-      'Rollup: known-data correctness (revenue=300, orderCount=2, aov=150)',
-      rollupBucket && rollupBucket.revenue === 300 && rollupBucket.orderCount === 2 && rollupBucket.aov === 150,
+      'Rollup: known-data correctness (revenue=315, orderCount=2, aov=157.5)',
+      rollupBucket && rollupBucket.revenue === 315 && rollupBucket.orderCount === 2 && rollupBucket.aov === 157.5,
       rollupBucket
     );
 

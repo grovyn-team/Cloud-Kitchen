@@ -40,8 +40,10 @@ import { branchExistsInTenant } from '../services/branchAccessService.js';
 import { eq } from 'drizzle-orm';
 import { schema } from '../db/dal.js';
 import * as taxService from '../services/taxService.js';
+import { setEffectiveGstRate, NonMonotonicGstRateError } from '../services/gstRateService.js';
 
 const EXPORT_FORMATS = ['csv'];
+const MAX_RATE_PERCENT = 100;
 
 function badRequest(message, details) {
   return reply(400, { error: 'BadRequest', message, ...(details ? { details } : {}) });
@@ -158,6 +160,49 @@ export function getExport(pool) {
     return replyRaw(200, csv, {
       'Content-Type': 'text/csv; charset=utf-8',
       'Content-Disposition': `attachment; filename="${filename}"`,
+    });
+  });
+}
+
+/**
+ * POST /api/v1/tax/rates — Integration Task 2, round 3: the missing piece
+ * that makes the effective-dated GST model (round 2) reachable by a user at
+ * all. Body: `{ ratePercent, effectiveFrom }`. Closes whichever rate is
+ * currently open for this tenant at `effectiveFrom` and opens the new one --
+ * `gstRateService.setEffectiveGstRate` does the actual work (including the
+ * advisory-lock serialization against a concurrent call for the same
+ * tenant); this route only validates input shape.
+ * @param {import('pg').Pool} pool
+ */
+export function createRate(pool) {
+  return withTenantContext(pool)(async (req, db) => {
+    const body = req.body || {};
+
+    const ratePercent = Number(body.ratePercent);
+    if (!Number.isFinite(ratePercent) || ratePercent < 0 || ratePercent > MAX_RATE_PERCENT) {
+      return badRequest(`ratePercent is required and must be between 0 and ${MAX_RATE_PERCENT}.`);
+    }
+
+    const effectiveFrom = typeof body.effectiveFrom === 'string' ? body.effectiveFrom.trim() : '';
+    if (!isValidDateString(effectiveFrom)) {
+      return badRequest('effectiveFrom is required and must be YYYY-MM-DD.');
+    }
+
+    let created;
+    try {
+      created = await setEffectiveGstRate(db, { tenantId: req.tenantId, ratePercent, effectiveFrom });
+    } catch (err) {
+      if (err instanceof NonMonotonicGstRateError) {
+        return badRequest(err.message);
+      }
+      throw err;
+    }
+
+    return reply(201, {
+      id: created.id,
+      ratePercent: created.ratePercent,
+      effectiveFrom: created.effectiveFrom,
+      effectiveTo: created.effectiveTo,
     });
   });
 }

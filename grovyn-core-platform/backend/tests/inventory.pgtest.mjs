@@ -139,6 +139,17 @@ async function seed() {
       staffA1Id,
       BRANCH_A1,
     ]);
+
+    // Integration Task 2, round 3 (fail-closed GST): this suite's "sale-
+    // triggered decrement" checks create real sales via `POST /api/v1/sales`
+    // -- every tenant needs a resolvable rate before that will write
+    // anything. Open-ended from well before any date this suite uses
+    // (including the 2031-02-02 atomicity-check date).
+    await client.query(
+      `INSERT INTO tax_rate (tenant_id, rate_percent, effective_from, effective_to) VALUES ($1, 5.00, DATE '2000-01-01', NULL), ($2, 5.00, DATE '2000-01-01', NULL)`,
+      [TENANT_A, TENANT_B]
+    );
+
     await client.query('COMMIT');
     console.log('[seed] inventory fixture tenants seeded:', { adminAId, staffA1Id, adminBId });
   } catch (err) {

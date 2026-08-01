@@ -1,23 +1,34 @@
 /**
- * Server entry. Boots seed, initializes services, then starts HTTP server.
+ * Server entry. Starts the HTTP server.
+ *
+ * Integration Task 3, round 3: previously ran `runBootstrap()` first --
+ * seeding an entire in-memory legacy demo dataset and initializing ~19
+ * legacy services on every boot, none of which any live route has served
+ * since Integration Task 2 (round 3) unmounted their last consumers.
+ * Removed along with `bootstrap.js`/`seed/`/the legacy service+engine tree
+ * itself -- see this task's report for the full deletion list.
+ *
+ * Pre-existing local-dev gap, found and fixed here: `backend/.env.example`
+ * has always said "copy to `.env`", but nothing in this runtime entrypoint
+ * ever loaded a `.env` file -- only `drizzle.config.js`'s CLI did (via its
+ * own `import 'dotenv/config'`). A correctly-filled-in `.env` was silently
+ * inert for `node src/server.js`; only real shell-exported env vars ever
+ * reached `process.env`, so `DATABASE_APP_URL is not set` fired even with a
+ * populated `.env` sitting right next to it. `dotenv/config` must be the
+ * FIRST import here (before `./app.js`, which transitively imports
+ * `db/pool.js` -- that file reads `process.env.DATABASE_APP_URL` at module
+ * load time and throws immediately if unset) so `.env` is loaded before
+ * anything else evaluates. Safe in Docker too: dotenv never overrides a
+ * variable `process.env` already has, and no `.env` file exists in the
+ * container image at all -- compose's `environment:` block is the only
+ * source there, unaffected by this.
  */
 
+import 'dotenv/config';
 import app from './app.js';
 import { config } from './config/index.js';
-import { runBootstrap } from './bootstrap.js';
-import * as orderIngestionService from './services/orderIngestionService.js';
 
 function main() {
-  try {
-    runBootstrap();
-  } catch (err) {
-    console.error('Bootstrap failed:', err.message);
-    process.exit(1);
-  }
-
-  const ingestionCounts = orderIngestionService.getIngestionCounts();
-  console.log('Orders ingested:', ingestionCounts.total);
-
   const PREFERRED_FALLBACK_PORT = 3001;
 
   function startListening(port) {

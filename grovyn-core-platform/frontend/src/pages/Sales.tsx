@@ -12,6 +12,8 @@ import type {
   Sale,
   SaleLineItemInput,
   SalesImportResult,
+  SalesImportRowError,
+  AvailableInventoryItem,
   SalesRollupResponse,
   SalesRollupPoint,
   RollupPeriod,
@@ -84,6 +86,92 @@ function BranchField({
           </option>
         ))}
       </select>
+    </div>
+  );
+}
+
+/**
+ * Integration Task 1, round 3 — "let the user add an alias from the error
+ * screen so a failed import is one click from working." Extracts each
+ * unmatched item name from the row errors (matching the exact message shape
+ * `salesCsvImportService.js`'s `validateAndBuildRows` produces), and offers
+ * an inline "map to an existing item, add alias" action per name — does not
+ * auto-retry the import; the user re-uploads once every unmatched name is
+ * resolved, same explicit re-check discipline every other write flow here
+ * uses.
+ */
+const UNMATCHED_ITEM_NAME_RE = /^itemName "(.+)" does not match any item or alias for this branch\.$/;
+
+function UnmatchedItemAliasFixer({
+  branchId,
+  errors,
+  availableItems,
+}: {
+  branchId: string;
+  errors: SalesImportRowError[];
+  availableItems: AvailableInventoryItem[];
+}) {
+  const { api } = useAuth();
+  const unmatchedNames = useMemo(() => {
+    const names = new Set<string>();
+    errors.forEach((e) => {
+      const m = UNMATCHED_ITEM_NAME_RE.exec(e.error);
+      if (m) names.add(m[1]);
+    });
+    return [...names];
+  }, [errors]);
+
+  const [selection, setSelection] = useState<Record<string, string>>({});
+  const [status, setStatus] = useState<Record<string, 'idle' | 'submitting' | 'done' | 'error'>>({});
+
+  if (unmatchedNames.length === 0) return null;
+
+  async function handleAddAlias(aliasName: string) {
+    const inventoryItemId = selection[aliasName];
+    if (!inventoryItemId) return;
+    setStatus((s) => ({ ...s, [aliasName]: 'submitting' }));
+    try {
+      await api.post(apiPaths.inventoryAliases, { branchId, inventoryItemId, aliasName });
+      setStatus((s) => ({ ...s, [aliasName]: 'done' }));
+    } catch {
+      setStatus((s) => ({ ...s, [aliasName]: 'error' }));
+    }
+  }
+
+  return (
+    <div className="space-y-2 rounded-lg border border-amber-300 bg-white p-3">
+      <p className="text-xs font-medium uppercase tracking-wide text-amber-900">
+        Unmatched item names — map to an existing item, then re-upload
+      </p>
+      {unmatchedNames.map((name) => (
+        <div key={name} className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="font-medium text-foreground">&ldquo;{name}&rdquo;</span>
+          <span className="text-muted-foreground">→</span>
+          <select
+            className={`${inputClass} w-auto`}
+            value={selection[name] ?? ''}
+            onChange={(e) => setSelection((s) => ({ ...s, [name]: e.target.value }))}
+            disabled={status[name] === 'done'}
+          >
+            <option value="">Select an item…</option>
+            {availableItems.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!selection[name] || status[name] === 'submitting' || status[name] === 'done'}
+            onClick={() => handleAddAlias(name)}
+          >
+            {status[name] === 'submitting' ? 'Adding…' : status[name] === 'done' ? 'Added ✓' : 'Add alias'}
+          </Button>
+          {status[name] === 'error' && <span className="text-xs text-red-700">Could not add. Try again.</span>}
+        </div>
+      ))}
     </div>
   );
 }
@@ -225,6 +313,13 @@ function SalesUpload() {
                 </tbody>
               </table>
             </div>
+            {state.result.availableItems && state.result.availableItems.length > 0 && (
+              <UnmatchedItemAliasFixer
+                branchId={branchId}
+                errors={state.result.errors}
+                availableItems={state.result.availableItems}
+              />
+            )}
           </div>
         )}
 

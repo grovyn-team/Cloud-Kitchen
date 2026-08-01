@@ -1,0 +1,129 @@
+name: Backend tests
+
+# Integration Task 4, round 3 — replaces the DB-free `npm run verify` smoke
+# test's "catch it before merge" role (that suite lost almost all its real
+# coverage when Integration Task 2 retired the legacy demo-auth path it
+# authenticated through — see backend/tests/system.test.js's own doc
+# comment). Runs the REAL, DB-backed *.pgtest.mjs suites against a real
+# Postgres service container on every push/PR, so the actual coverage this
+# repo has built up (branch CRUD, tenant/RLS isolation, auth, sales,
+# inventory + the zip-bomb guard, customers, staff management, notifications,
+# dashboard/finance, expansion, tax) runs automatically instead of requiring
+# a human to remember to start Docker locally.
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+
+jobs:
+  backend-pgtests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: grovyn-core-platform/backend
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          # Fixed at 55433 to match every *.pgtest.mjs suite's own fallback
+          # default (`PGTEST_APP_URL`/`PGTEST_MIGRATOR_URL`) -- no env var
+          # overrides needed for the suites themselves, only for this
+          # workflow's own bootstrap/migrate steps below.
+          - 55433:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PGHOST: localhost
+      PGPORT: 55433
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      DATABASE_MIGRATOR_URL: postgresql://grovyn_migrator:CHANGE_ME_MIGRATOR@localhost:55433/grovyn
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Bootstrap database + roles
+        run: |
+          createdb grovyn
+          psql -d grovyn -f drizzle/bootstrap-roles.sql
+
+      # NOTE: NOT `npm run db:migrate` (drizzle-kit's CLI). Reproduced
+      # locally, twice, on a clean container: `drizzle-kit migrate` hangs on
+      # its own progress spinner and exits 1 with no error output at all --
+      # untriaged (possibly a TTY-detection issue in this drizzle-kit
+      # version), but consistently reproducible, so it cannot be trusted in
+      # a CI step where a silent/opaque failure would be worse than useless.
+      # Every *.pgtest.mjs suite's own doc comments already establish "apply
+      # migrations 0000→NNNN in order via psql" as this repo's real,
+      # verified-working migration path (used throughout this session's
+      # verification) -- this step does exactly that, applying each
+      # generated migration file in filename order as `grovyn_migrator`
+      # (matching production topology, not the shortcut of running as the
+      # `postgres` superuser).
+      - name: Apply migrations (as grovyn_migrator, matching production topology)
+        run: |
+          export PGPASSWORD=CHANGE_ME_MIGRATOR
+          for f in $(ls drizzle/*.sql | sort -V); do
+            echo "Applying $f"
+            psql -h localhost -p 55433 -U grovyn_migrator -d grovyn -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Seed fixtures for tenantContext/dal suites
+        # These two suites (unlike every other *.pgtest.mjs suite here) do
+        # not self-seed -- their own doc comments describe fixture tenants
+        # that, until this task, only ever existed in an earlier phase's
+        # chat transcript, never as a committed script. Found while wiring
+        # this workflow; see this task's report.
+        run: npm run seed:pgtest-fixtures
+
+      - name: Run real DB-backed test suites
+        env:
+          PGTEST_APP_URL: postgresql://grovyn_app:CHANGE_ME_APP@localhost:55433/grovyn
+          PGTEST_MIGRATOR_URL: postgresql://grovyn_migrator:CHANGE_ME_MIGRATOR@localhost:55433/grovyn
+        run: npm run test:all
+
+      # NOTE: `npm run check:gst-rates` is deliberately NOT run here. It's a
+      # PRODUCTION operational diagnostic (Integration Task 2, round 3) --
+      # every OTHER pgtest suite in this test database seeds its own fixture
+      # tenants that never create a sale (auth, customers, staff management,
+      # notifications, dashboard/finance, expansion), so they have no
+      # `tax_rate` row and never need one; running this check here would
+      # "fail" on every CI run for a reason that has nothing to do with a
+      # real regression. Verified working correctly against a real container
+      # in this task's own report instead (immediately after migrations, on
+      # a tenant-free database, and again after deliberately removing a real
+      # tenant's rate row).
+      - name: Backend boot + health smoke test
+        env:
+          DATABASE_APP_URL: postgresql://grovyn_app:CHANGE_ME_APP@localhost:55433/grovyn
+        run: npm run verify
+
+  frontend-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: grovyn-core-platform/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm ci
+      - name: Type-check
+        run: npx tsc -b

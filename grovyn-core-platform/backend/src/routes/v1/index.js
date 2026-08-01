@@ -100,7 +100,7 @@ import {
 } from '../notifications.js';
 import { getSummary as getDashboardSummary, getByBranch as getDashboardByBranch } from '../dashboard.js';
 import { getSummary as getRealFinanceSummary } from '../financeManagement.js';
-import { getSummary as getTaxSummary, getExport as getTaxExport } from '../tax.js';
+import { getSummary as getTaxSummary, getExport as getTaxExport, createRate as createTaxRate } from '../tax.js';
 import { getExpansionPlan as getRealExpansionPlan } from '../expansion.js';
 import {
   createBranch,
@@ -109,6 +109,7 @@ import {
   listBranches,
   getBranch,
 } from '../branches.js';
+import { createAlias as createInventoryAlias } from '../inventoryAliases.js';
 import { config } from '../../config/index.js';
 
 const router = Router();
@@ -172,6 +173,11 @@ router.post(
 router.post(`${prefix}/inventory/requests`, ...inventoryAuth, createInventoryRequest(pool));
 router.get(`${prefix}/inventory/items`, ...inventoryAuth, listInventoryItems(pool));
 router.get(`${prefix}/inventory/items/:id`, ...inventoryAuth, getInventoryItem(pool));
+
+// Inventory item aliases (Integration Task 1, round 3) -- ADMIN-only create,
+// so a failed CSV import (unmatched item name) is one click from working.
+const inventoryAliasAuth = [requireSession(pool), requireSessionRole(['ADMIN'])];
+router.post(`${prefix}/inventory/aliases`, ...inventoryAliasAuth, createInventoryAlias(pool));
 
 // Customers (P3 backend, 2026-07-30) -- real DB-backed module, same
 // requireSession/requireRole(sessionAuth.js) model as Sales/Inventory.
@@ -247,6 +253,7 @@ router.get(`${prefix}/finance/summary`, ...financeMgmtAuth, getRealFinanceSummar
 const taxAuth = [requireSession(pool), requireSessionRole(['ADMIN'])];
 router.get(`${prefix}/tax/summary`, ...taxAuth, getTaxSummary(pool));
 router.get(`${prefix}/tax/export`, ...taxAuth, getTaxExport(pool));
+router.post(`${prefix}/tax/rates`, ...taxAuth, createTaxRate(pool));
 
 // Expansion planning (P35-01/P35-02 backend, 2026-07-30) -- real DB-backed,
 // deterministic (NO AI/HF calls anywhere in this path), ADMIN-ONLY

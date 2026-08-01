@@ -41,6 +41,7 @@ import { branchExistsInTenant } from '../services/branchAccessService.js';
 import { hashPassword } from '../services/passwordService.js';
 import * as staffManagementService from '../services/staffManagementService.js';
 import { logAuditEvent } from '../services/auditService.js';
+import { assertSeatLimitNotExceeded, TenantLimitExceededError } from '../services/tenantLimitsService.js';
 
 function badRequest(message, details) {
   return reply(400, { error: 'BadRequest', message, ...(details ? { details } : {}) });
@@ -130,6 +131,15 @@ export function createStaff(pool) {
 
     if (await staffManagementService.emailInUse(db, { tenantId: req.tenantId, email })) {
       return conflict('A staff account with this email already exists.');
+    }
+
+    // Integration Task 3, round 3: tenant.seat_limit, enforced at the one
+    // chokepoint that creates a user account.
+    try {
+      await assertSeatLimitNotExceeded(db, req.tenantId);
+    } catch (err) {
+      if (err instanceof TenantLimitExceededError) return conflict(err.message);
+      throw err;
     }
 
     const passwordHash = await hashPassword(password);

@@ -888,6 +888,57 @@ export const inventoryItem = pgTable(
 ).enableRLS();
 
 // ============================================================================
+// inventory_item_alias — Integration Task 1 (round 3): resolves a free-text
+// item name from a POS/CSV export to a real `inventory_item` without
+// requiring the export to know our internal id. A branch can have many
+// aliases pointing at one item (different POS systems/export formats naming
+// the same dish differently); `(branch_id, lower(alias_name))` is unique so
+// one alias never resolves ambiguously. NOT a financial/audit record --
+// ordinary hard-delete-able lookup data (unlike almost everything else in
+// this schema), since removing a wrong/stale alias should just remove it,
+// no soft-delete/retention marker needed.
+// ============================================================================
+export const inventoryItemAlias = pgTable(
+  'inventory_item_alias',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenant.id),
+    // No single-column `.references(() => branch.id)` -- composite FK below
+    // covers it + cross-checks tenant_id, same pattern as every other
+    // branch-scoped table in this schema.
+    branchId: uuid('branch_id').notNull(),
+    // No single-column `.references(() => inventoryItem.id)` -- composite FK
+    // below covers it + cross-checks tenant_id, same reasoning.
+    inventoryItemId: uuid('inventory_item_id').notNull(),
+    aliasName: text('alias_name').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('inventory_item_alias_tenant_id_idx').on(table.tenantId),
+    index('inventory_item_alias_inventory_item_id_idx').on(table.inventoryItemId),
+    uniqueIndex('inventory_item_alias_branch_alias_unique_idx').on(table.branchId, sql`lower(${table.aliasName})`),
+    foreignKey({
+      columns: [table.branchId, table.tenantId],
+      foreignColumns: [branch.id, branch.tenantId],
+      name: 'inventory_item_alias_branch_id_tenant_id_fk',
+    }),
+    foreignKey({
+      columns: [table.inventoryItemId, table.tenantId],
+      foreignColumns: [inventoryItem.id, inventoryItem.tenantId],
+      name: 'inventory_item_alias_inventory_item_id_tenant_id_fk',
+    }),
+    pgPolicy('inventory_item_alias_tenant_isolation', {
+      for: 'all',
+      to: 'public',
+      using: tenantIsolation(table),
+      withCheck: tenantIsolation(table),
+    }),
+  ],
+).enableRLS();
+
+// ============================================================================
 // inventory_movement — append-only adjustment/movement log, explicitly
 // modeled on `audit_log` above per this task's own instructions ("append-
 // only similar to audit_log"): NO `deleted_at`/`updated_at`/retention

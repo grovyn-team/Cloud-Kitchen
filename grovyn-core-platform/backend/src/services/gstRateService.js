@@ -1,9 +1,21 @@
 /**
- * Integration Task 4 — effective-dated GST rate resolution. Single source
- * of truth for "what rate applies to a sale line dated X", used by every
- * write path that creates a `sale_line_item` (`saleService.createSale`,
- * `salesCsvImportService`'s batch insert) so the resolution logic exists
- * exactly once, not duplicated per caller.
+ * Integration Task 4 (round 2) / hardened in round 3 — effective-dated GST
+ * rate resolution. Single source of truth for "what rate applies to a sale
+ * line dated X", used by every write path that creates a `sale_line_item`
+ * (`saleService.createSale`, `salesCsvImportService`'s batch insert) so the
+ * resolution logic exists exactly once, not duplicated per caller.
+ *
+ * Integration Task 2, round 3 (fail-closed, not a silent default): round 2
+ * shipped this with a silent `DEFAULT_GST_RATE_PERCENT` fallback when a
+ * tenant had no covering rate row -- flagged in that round's own security
+ * self-review as wrong for money (an incorrect tax figure computed
+ * invisibly, that then reaches a CA, is worse than a loud failure). That
+ * fallback is REMOVED: `resolveEffectiveGstRate` now throws
+ * `NoGstRateConfiguredError` and `resolveRateFromHistory` returns `null` --
+ * a sale cannot be written without a resolvable rate, full stop. Callers
+ * (`saleService.createSale`, `salesCsvImportService.validateAndBuildRows`,
+ * and their routes) are responsible for turning that into a clear error,
+ * not swallowing it.
  *
  * Every exported function here takes a tenant-scoped `db`
  * (`../db/dal.js`'s `createScopedDb`) -- same contract as every other
@@ -15,24 +27,16 @@ import { and, eq, gt, isNull, lte, or } from 'drizzle-orm';
 import { schema } from '../db/dal.js';
 import { round2 } from '../utils/validation.js';
 
-// Same default this codebase has used since Phase 6's first pass
-// (`taxService.js`'s original `DEFAULT_GST_RATE_PERCENT`) -- India's
-// standard GST slab for standalone restaurant/cloud-kitchen F&B services
-// without input tax credit. Used ONLY when a tenant has no `tax_rate` row
-// covering the sale date at all (should not happen for any tenant that went
-// through the Integration Task 4 backfill migration, which gives every
-// existing tenant an open-ended row from 2000-01-01 -- this is a safety net
-// for a tenant record created some other way, e.g. directly via SQL,
-// without one).
-export const DEFAULT_GST_RATE_PERCENT = 5.0;
+export class NoGstRateConfiguredError extends Error {}
+export class NonMonotonicGstRateError extends Error {}
 
 /**
  * Resolves the GST rate percent in force for `tenantId` on `saleDate`
  * (`YYYY-MM-DD`) — the row where
  * `effective_from <= saleDate AND (effective_to IS NULL OR saleDate < effective_to)`.
- * Falls back to `DEFAULT_GST_RATE_PERCENT` (never throws) if no row covers
- * the date, so a missing/incomplete rate history degrades to a documented
- * default rather than blocking every sale for that tenant.
+ * Throws `NoGstRateConfiguredError` if no row covers the date -- there is no
+ * default to fall back to; a sale cannot be recorded without a real,
+ * resolvable rate (Integration Task 2, round 3).
  * @param {*} db
  * @param {{tenantId: string, saleDate: string}} args
  * @returns {Promise<number>}
@@ -50,9 +54,14 @@ export async function resolveEffectiveGstRate(db, { tenantId, saleDate }) {
     )
     .limit(1);
 
-  if (!row) return DEFAULT_GST_RATE_PERCENT;
+  if (!row) {
+    throw new NoGstRateConfiguredError(`No GST rate is configured for this tenant covering ${saleDate}.`);
+  }
   const n = Number(row.ratePercent);
-  return Number.isFinite(n) ? n : DEFAULT_GST_RATE_PERCENT;
+  if (!Number.isFinite(n)) {
+    throw new NoGstRateConfiguredError(`The GST rate configured for this tenant covering ${saleDate} is invalid.`);
+  }
+  return n;
 }
 
 /**
@@ -85,18 +94,23 @@ export async function fetchTenantGstRateHistory(db, tenantId) {
 
 /**
  * Pure, in-memory equivalent of `resolveEffectiveGstRate` -- resolves
- * against an already-fetched rate history array instead of querying. Same
- * fallback behavior (never throws; `DEFAULT_GST_RATE_PERCENT` if nothing
- * covers the date).
+ * against an already-fetched rate history array instead of querying.
+ * Returns `null` (never a default) if nothing covers the date -- a pure
+ * function can't itself decide "throw vs. collect as a row error", so it
+ * hands the caller a signal instead: `salesCsvImportService
+ * .validateAndBuildRows` turns a `null` here into a per-row import error
+ * (same shape as an unmatched item name), which is more useful to a bulk
+ * importer than one exception aborting the whole request with no row
+ * context.
  * @param {{ratePercent: number, effectiveFrom: string, effectiveTo: string|null}[]} rateHistory
  * @param {string} saleDate
- * @returns {number}
+ * @returns {number|null}
  */
 export function resolveRateFromHistory(rateHistory, saleDate) {
   const match = rateHistory.find(
     (r) => r.effectiveFrom <= saleDate && (r.effectiveTo === null || saleDate < r.effectiveTo)
   );
-  return match ? match.ratePercent : DEFAULT_GST_RATE_PERCENT;
+  return match ? match.ratePercent : null;
 }
 
 /**
@@ -116,19 +130,54 @@ export function computeLineTax(lineSubtotal, ratePercent) {
 /**
  * Sets a NEW effective-dated rate for a tenant, closing whichever row is
  * currently open (`effective_to IS NULL`) at `effectiveFrom` in the SAME
- * transaction -- never leaves two open rows for a tenant (the DB-level
- * `tax_rate_tenant_open_unique_idx` partial unique index is the backstop,
- * this is the primary enforcement, same "app logic primary / constraint
- * backstop" posture as every other invariant in this codebase).
+ * transaction -- never leaves two open rows for a tenant.
  *
- * Not currently wired to any route -- Integration Task 4's brief asked for
- * the effective-dated MODEL, migration, and recomputation, not a rate-
- * management API/UI. Exported now so that follow-up task doesn't have to
- * re-derive this logic; a route can call it directly once built.
+ * Integration Task 2, round 3: wrapped in `pg_advisory_xact_lock`, keyed on
+ * a hash of `tenantId`, held for the rest of the CURRENT transaction (auto-
+ * released on COMMIT/ROLLBACK, no separate unlock call needed) -- two
+ * concurrent calls for the SAME tenant now serialize instead of racing the
+ * `tax_rate_tenant_open_unique_idx` partial unique index (which was the
+ * only thing preventing corruption before this, and only by making the
+ * SECOND caller's insert fail with a raw constraint-violation 500, not by
+ * actually preventing the race). A different tenant's call is entirely
+ * unaffected -- the lock key is tenant-specific, not global. `hashtext()`
+ * returns a 32-bit int; cast to bigint for `pg_advisory_xact_lock`'s
+ * single-key overload (the alternative two-int32-key overload would work
+ * too, this is simpler for one key).
+ *
+ * Wired to `POST /api/v1/tax/rates` (`routes/tax.js`) as of round 3 --
+ * previously exported but unreachable by any route (round 2 built the
+ * model without a way for a user to actually use it).
+ *
+ * Monotonicity check (found by ACTUALLY firing 5 concurrent calls with
+ * out-of-order `effectiveFrom` dates against a real container during this
+ * task's verification, not reasoned about in the abstract): the advisory
+ * lock alone serializes the writes -- no crash, no duplicate open row -- but
+ * does NOT stop the SECOND-to-acquire-the-lock call from closing a row with
+ * an `effectiveFrom` EARLIER than the one already open, which produces a
+ * logically inverted interval (`effective_to < effective_from`) that no
+ * date can ever resolve into. Closed here: once the lock is held, re-read
+ * the current open row and reject (`NonMonotonicGstRateError`) if the new
+ * `effectiveFrom` does not strictly exceed it -- turns a silent, permanent,
+ * unreachable-rate data-integrity gap into a clear rejection the caller can
+ * retry with a later date.
  * @param {*} db
  * @param {{tenantId: string, ratePercent: number, effectiveFrom: string}} args
  */
 export async function setEffectiveGstRate(db, { tenantId, ratePercent, effectiveFrom }) {
+  await db.raw('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [tenantId]);
+
+  const [currentOpen] = await db
+    .select({ effectiveFrom: schema.taxRate.effectiveFrom })
+    .from(schema.taxRate)
+    .where(and(eq(schema.taxRate.tenantId, tenantId), isNull(schema.taxRate.effectiveTo)));
+
+  if (currentOpen && effectiveFrom <= currentOpen.effectiveFrom) {
+    throw new NonMonotonicGstRateError(
+      `effectiveFrom (${effectiveFrom}) must be after the currently open rate's effectiveFrom (${currentOpen.effectiveFrom}).`
+    );
+  }
+
   await db
     .update(schema.taxRate)
     .set({ effectiveTo: effectiveFrom, updatedAt: new Date() })

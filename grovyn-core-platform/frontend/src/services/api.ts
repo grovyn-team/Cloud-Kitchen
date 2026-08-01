@@ -44,27 +44,8 @@ export function createApi(
 }
 
 export const apiPaths = {
-  auth: { login: '/api/v1/auth/login' },
+  auth: { login: '/api/v1/auth/login', me: '/api/v1/auth/me' },
   health: '/api/v1/health',
-  // DEAD -- kept ONLY so the orphaned, unrouted `pages/Stores.tsx`,
-  // `pages/StoreDetail.tsx`, `pages/Store.tsx` still compile (Integration
-  // Task 2 unmounted every backend route these call: `/stores`,
-  // `/store-health`, `/stores/:id/health`, `/inventory-insights`,
-  // `/workforce-insights`, `/finance/stores`, `/finance-insights`,
-  // `/autopilot/alerts` — see `routes/v1/index.js`'s top doc comment. Every
-  // real branch picker in the app uses `branches`/`branchesList` below
-  // instead. Deleting these 3 unrouted files (recommended — they are 100%
-  // superseded by the real `Branches` page) would let this whole block be
-  // removed too; deleting frontend page files was outside this pass's
-  // explicit scope, so it's flagged for a decision instead of done here.
-  stores: '/api/v1/stores',
-  storeHealth: '/api/v1/store-health',
-  storeHealthById: (id: string) => `/api/v1/stores/${id}/health`,
-  alerts: '/api/v1/autopilot/alerts',
-  inventoryInsights: '/api/v1/inventory-insights',
-  workforceInsights: '/api/v1/workforce-insights',
-  financeStores: '/api/v1/finance/stores',
-  financeInsights: '/api/v1/finance-insights',
   // Real DB-backed branch management (P1-06, Integration Task 1). ADMIN gets
   // full CRUD; STAFF list/detail is scoped server-side to their assigned
   // branches. Supersedes the legacy `/api/v1/stores` mock -- every branch
@@ -129,6 +110,7 @@ export const apiPaths = {
   inventoryItemById: (id: string) => `/api/v1/inventory/items/${id}`,
   inventoryImport: '/api/v1/inventory/import',
   inventoryRequests: '/api/v1/inventory/requests',
+  inventoryAliases: '/api/v1/inventory/aliases',
   inventoryItemsList: (params: { branchId?: string; lowStock?: boolean; page?: number; pageSize?: number }) => {
     const q = new URLSearchParams();
     if (params.branchId) q.set('branchId', params.branchId);
@@ -191,6 +173,7 @@ export const apiPaths = {
   // Downloads a CSV file — fetch with `responseType: 'blob'` via the
   // authenticated `api` client (a plain `<a href>` can't attach the bearer
   // token), then trigger the browser download from the blob.
+  taxRates: '/api/v1/tax/rates',
   taxExport: (params: { branchId?: string; periodStart: string; periodEnd: string; format?: string }) => {
     const q = new URLSearchParams();
     if (params.branchId) q.set('branchId', params.branchId);

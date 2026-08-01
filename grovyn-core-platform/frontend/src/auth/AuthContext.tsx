@@ -5,9 +5,17 @@ import type { AxiosInstance } from 'axios';
 
 const STORAGE_KEY = 'grovyn_session';
 
-/** Stateless tokens contain a dot (payload.signature). Old in-memory tokens do not. */
-function isStatelessToken(token: string): boolean {
-  return typeof token === 'string' && token.includes('.');
+interface LoginResponse {
+  sessionToken: string;
+  expiresAt: string;
+  tenant: { id: string; name: string; slug: string };
+  user: { id: string; email: string; name: string; role: Role };
+}
+
+interface MeResponse {
+  tenant: { id: string };
+  user: { id: string; role: Role };
+  branchIds: string[];
 }
 
 function loadStoredSession(): AuthSession | null {
@@ -16,8 +24,6 @@ function loadStoredSession(): AuthSession | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as AuthSession;
     if (!parsed?.sessionToken || !parsed?.userId || !parsed?.role) return null;
-    // Backend now uses stateless tokens (required for Vercel). Discard old-format tokens.
-    if (!isStatelessToken(parsed.sessionToken)) return null;
     return parsed;
   } catch {
     return null;
@@ -81,12 +87,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = useCallback(
     async (payload: LoginPayload): Promise<AuthSession> => {
-      const { data } = await api.post<AuthSession>(apiPaths.auth.login, payload);
+      const { data } = await api.post<LoginResponse>(apiPaths.auth.login, payload);
+      // Login's own response has no branchIds (see `backend/src/routes/auth.js`) --
+      // fetch it separately. `api`'s request interceptor reads the token from
+      // `user` state, which hasn't been set yet, so pass it explicitly here.
+      const { data: me } = await api.get<MeResponse>(apiPaths.auth.me, {
+        headers: { Authorization: `Bearer ${data.sessionToken}` },
+      });
       const session: AuthSession = {
-        userId: data.userId,
-        role: data.role,
-        storeIds: data.storeIds ?? [],
         sessionToken: data.sessionToken,
+        expiresAt: data.expiresAt,
+        tenantId: data.tenant.id,
+        tenantName: data.tenant.name,
+        tenantSlug: data.tenant.slug,
+        userId: data.user.id,
+        email: data.user.email,
+        name: data.user.name,
+        role: data.user.role,
+        branchIds: me.branchIds ?? [],
       };
       setUser(session);
       return session;
@@ -104,7 +122,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       getToken,
       api,
       role: user?.role ?? null,
-      storeIds: user?.storeIds ?? [],
+      storeIds: user?.branchIds ?? [],
     }),
     [user, login, logout, getToken, api]
   );

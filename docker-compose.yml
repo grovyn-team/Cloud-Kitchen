@@ -1,0 +1,108 @@
+# Integration Task 5, round 3 — real deployment, replacing the Vercel/
+# Netlify template residue this repo carried since Phase 0 (no Dockerfile,
+# no compose file ever existed here before this task). Three services --
+# Postgres, backend, frontend -- plus a one-shot `migrate` service. NO
+# PgBouncer or other external pooler (standing decision from earlier in this
+# project: one backend container, a pool in the tens of connections against
+# Postgres's default limit of 100 -- an extra pooling layer solves no
+# problem this topology has). See `deployment/README.md` for what to set
+# and how to bring this up.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?POSTGRES_SUPERUSER_PASSWORD must be set}
+      POSTGRES_DB: grovyn
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Not published to the host by default -- only `backend`/`migrate` (on
+    # the compose network) need to reach it. Uncomment to inspect locally:
+    # ports:
+    #   - '5432:5432'
+
+  migrate:
+    build:
+      context: ./grovyn-core-platform/backend
+      target: migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGSUPERUSER: postgres
+      POSTGRES_SUPERUSER_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?POSTGRES_SUPERUSER_PASSWORD must be set}
+      PGDATABASE: grovyn
+      GROVYN_MIGRATOR_PASSWORD: ${GROVYN_MIGRATOR_PASSWORD:?GROVYN_MIGRATOR_PASSWORD must be set}
+      GROVYN_APP_PASSWORD: ${GROVYN_APP_PASSWORD:?GROVYN_APP_PASSWORD must be set}
+
+  backend:
+    build:
+      context: ./grovyn-core-platform/backend
+      target: runtime
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      # The app boots without SESSION_SECRET now (Integration Task 2, round
+      # 3 removed the legacy HMAC auth path that was its only consumer) --
+      # DATABASE_APP_URL is what `src/db/pool.js` actually refuses to boot
+      # without. Never the migrator URL/role -- see that file's own doc
+      # comment (SEC-P101-IR-03: no runtime-to-migrator fallback, ever).
+      DATABASE_APP_URL: postgresql://grovyn_app:${GROVYN_APP_PASSWORD:?GROVYN_APP_PASSWORD must be set}@postgres:5432/grovyn
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8080}
+    # No host port published by default -- the frontend's nginx reverse-
+    # proxies /api/ to this service by its compose service name. Uncomment
+    # to call the API directly for debugging:
+    # ports:
+    #   - '3001:3001'
+
+  frontend:
+    build:
+      context: ./grovyn-core-platform/frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - '${FRONTEND_PORT:-8080}:80'
+
+  backup:
+    # Integration Task 6, round 3 — scheduled pg_dump, retained. Reuses the
+    # stock postgres:16-alpine image directly (it already ships `pg_dump`)
+    # rather than building a dedicated image for one script.
+    image: postgres:16-alpine
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: grovyn
+      GROVYN_MIGRATOR_PASSWORD: ${GROVYN_MIGRATOR_PASSWORD:?GROVYN_MIGRATOR_PASSWORD must be set}
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-86400}
+      BACKUP_RETAIN_COUNT: ${BACKUP_RETAIN_COUNT:-14}
+    volumes:
+      - ./deployment/backup.sh:/backup.sh:ro
+      # Bind-mounted to the HOST, deliberately -- a backup that only ever
+      # lives inside a named Docker volume dies with the same `docker
+      # compose down -v` that would destroy the primary data it exists to
+      # protect against.
+      - ./backups:/backups
+    entrypoint: ["sh", "/backup.sh"]
+
+volumes:
+  postgres_data:

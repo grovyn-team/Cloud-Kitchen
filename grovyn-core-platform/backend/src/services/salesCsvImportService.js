@@ -22,6 +22,21 @@
  * ONCE by the caller (`routes/sales.js`) and passed in as `rateHistory` --
  * not one DB query per row, since an import can be thousands of rows.
  *
+ * Integration Task 1, round 3 (the inventory-decrement gap round 2's
+ * walkthrough found and isolated): every row's `itemName` is now resolved to
+ * a real `inventory_item` via `inventoryAliasService.resolveItemsForBranch`
+ * -- fetched ONCE by the caller for every distinct name in the file (same
+ * one-batch-query reasoning as `rateHistory`) and passed in as
+ * `resolvedItems` (a `Map<originalName, inventoryItemId>`). A name with no
+ * entry in that map is a ROW ERROR (`itemName does not match...`), same
+ * all-or-nothing posture every other row-content problem already gets --
+ * NOT a partial import. This reverses the previous version of this file,
+ * which built line items with no `inventoryItemId` at all and documented
+ * "why CSV-imported sales don't go through" the inventory decrement path;
+ * that gap is what this task closes -- see `insertSalesBatch` below, which
+ * now calls the exact same `inventoryManagementService
+ * .decrementForSaleLineItems` manual entry already uses, not a duplicate.
+ *
  * Formula-injection defense (OWASP CSV injection): `itemName`/`sku` go
  * through `sanitizeCsvCell()` before ever being held in a validated row or
  * written to the DB -- see `csvSanitize.js` for the full rationale. Every
@@ -37,6 +52,7 @@ import { PAYMENT_METHODS } from './saleService.js';
 import { sanitizeCsvCell } from './csvSanitize.js';
 import { isValidDateString, round2 } from '../utils/validation.js';
 import { resolveRateFromHistory, computeLineTax } from './gstRateService.js';
+import { decrementForSaleLineItems } from './inventoryManagementService.js';
 
 // (b) file size limit -- also enforced independently at the multer layer
 // (`middleware/csvUpload.js`) so an oversized upload is rejected before this
@@ -104,7 +120,7 @@ export function parseSalesCsv(buffer) {
  * caller has to remember.
  * @returns {{validRows: object[], errors: {row:number, error:string}[]}}
  */
-export function validateAndBuildRows(records, { tenantId, branchId, createdByUserId, rateHistory }) {
+export function validateAndBuildRows(records, { tenantId, branchId, createdByUserId, rateHistory, resolvedItems }) {
   const errors = [];
   const validRows = [];
 
@@ -120,6 +136,20 @@ export function validateAndBuildRows(records, { tenantId, branchId, createdByUse
     const itemNameRaw = typeof record.itemName === 'string' ? record.itemName.trim() : '';
     if (!itemNameRaw) {
       errors.push({ row: rowNum, error: 'itemName is required.' });
+      return;
+    }
+
+    // Integration Task 1, round 3: resolve against the branch's alias/catalog
+    // map BEFORE any other checks that would otherwise let this row through
+    // -- an unresolved item name is a row error like any other, and (per
+    // this task's explicit "no partial import" instruction) fails the WHOLE
+    // batch, same as every other row-content error here.
+    const inventoryItemId = resolvedItems.get(itemNameRaw) ?? null;
+    if (!inventoryItemId) {
+      errors.push({
+        row: rowNum,
+        error: `itemName "${itemNameRaw}" does not match any item or alias for this branch.`,
+      });
       return;
     }
 
@@ -150,7 +180,16 @@ export function validateAndBuildRows(records, { tenantId, branchId, createdByUse
     const sku = skuRaw ? sanitizeCsvCell(skuRaw) : null;
 
     const lineSubtotal = round2(quantity * unitPrice);
+    // Integration Task 2, round 3 (fail-closed GST): `resolveRateFromHistory`
+    // returns `null` (never a default) when nothing covers this row's date
+    // -- treated as a row error, same all-or-nothing posture as an
+    // unmatched item name, rather than throwing and aborting the whole
+    // request with no row context.
     const gstRatePercent = resolveRateFromHistory(rateHistory, saleDate);
+    if (gstRatePercent === null) {
+      errors.push({ row: rowNum, error: `No GST rate is configured for this tenant covering ${saleDate}.` });
+      return;
+    }
     const taxAmount = computeLineTax(lineSubtotal, gstRatePercent);
     const totalAmount = round2(lineSubtotal + taxAmount);
     // Generated up front (not left to the DB default) so the sale header and
@@ -172,6 +211,7 @@ export function validateAndBuildRows(records, { tenantId, branchId, createdByUse
       lineItem: {
         saleId,
         tenantId,
+        inventoryItemId,
         itemName,
         sku,
         quantity: quantity.toFixed(3),
@@ -195,6 +235,17 @@ export function validateAndBuildRows(records, { tenantId, branchId, createdByUse
  * (`routes/sales.js`) is responsible for having already confirmed
  * `errors.length === 0` from `validateAndBuildRows` -- this function does not
  * re-check that, it only ever receives rows already proven valid.
+ *
+ * Integration Task 1, round 3: after both multi-row INSERTs, decrements
+ * inventory for every row via `inventoryManagementService
+ * .decrementForSaleLineItems` -- the SAME function `saleService.createSale`
+ * calls for manual entry, not a reimplementation. Called once PER ROW (not
+ * once for the whole batch) because that function takes a single
+ * `relatedSaleId` and every CSV row is its own sale (one row == one sale,
+ * per this module's design decision above); every row's `lineItem` now
+ * carries a real `inventoryItemId` (resolved by the caller before
+ * `validateAndBuildRows` ran), so every decrement in this loop actually
+ * fires -- CSV-imported sales no longer silently skip inventory.
  * @returns {Promise<number>} imported row count.
  */
 export async function insertSalesBatch(db, { rows, importBatchRef }) {
@@ -217,6 +268,16 @@ export async function insertSalesBatch(db, { rows, importBatchRef }) {
 
   await db.insert(schema.sale).values(saleValues);
   await db.insert(schema.saleLineItem).values(lineItemValues);
+
+  for (const r of rows) {
+    await decrementForSaleLineItems(db, {
+      tenantId: r.tenantId,
+      branchId: r.branchId,
+      lineItems: [r.lineItem],
+      actorUserId: r.createdByUserId,
+      relatedSaleId: r.saleId,
+    });
+  }
 
   return rows.length;
 }

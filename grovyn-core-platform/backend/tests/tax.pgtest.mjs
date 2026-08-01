@@ -100,14 +100,21 @@ async function seed() {
 
     await client.query('BEGIN');
 
-    // Tenant B carries a custom GST-rate override in settings -- proves
-    // `taxService.resolveGstRate` reads `tenant.settings.tax.gstRate`, not
-    // just the hardcoded default.
     await client.query(
-      `INSERT INTO tenant (id, name, slug, settings) VALUES
-       ($1,$2,$3,'{}'::jsonb),
-       ($4,$5,$6,'{"tax":{"gstRate":12}}'::jsonb)`,
+      `INSERT INTO tenant (id, name, slug) VALUES ($1,$2,$3), ($4,$5,$6)`,
       [TENANT_A, 'Tax Fixture A', TENANT_A_SLUG, TENANT_B, 'Tax Fixture B', TENANT_B_SLUG]
+    );
+    // Integration Task 2/4, round 3: rate is now resolved per sale-line from
+    // `tax_rate`, never from `tenant.settings.tax.gstRate` (removed) -- 5%
+    // for tenant A, 12% for tenant B, proving the effective-dated rate
+    // still varies correctly PER TENANT even though this fixture only ever
+    // sets one rate per tenant (no mid-period change scenario here; that's
+    // covered live in this task's report, not re-tested in this suite).
+    await client.query(
+      `INSERT INTO tax_rate (tenant_id, rate_percent, effective_from, effective_to) VALUES
+       ($1, 5.00, DATE '2000-01-01', NULL),
+       ($2, 12.00, DATE '2000-01-01', NULL)`,
+      [TENANT_A, TENANT_B]
     );
     await client.query(
       'INSERT INTO branch (id, tenant_id, name) VALUES ($1,$2,$3), ($4,$2,$5), ($6,$7,$8)',
@@ -135,11 +142,21 @@ async function seed() {
       BRANCH_A1,
     ]);
 
-    async function insertSale({ id, tenantId, branchId, saleDate, subtotal, tax, total, deleted = false }) {
+    // Integration Task 4, round 3: `taxService.computeGstFromSales` now
+    // aggregates real `sale_line_item` rows (GROUP BY gst_rate_percent), not
+    // `sale` header sums -- this fixture inserts ONE line item per sale,
+    // subtotal/tax matching the header exactly (single-line sales), so the
+    // pre-existing expected totals below still hold unchanged.
+    async function insertSale({ id, tenantId, branchId, saleDate, subtotal, tax, total, rate, deleted = false }) {
       await client.query(
         `INSERT INTO sale (id, tenant_id, branch_id, sale_date, source, subtotal_amount, tax_amount, total_amount, deleted_at)
          VALUES ($1,$2,$3,$4,'manual',$5,$6,$7,${deleted ? 'now()' : 'NULL'})`,
         [id, tenantId, branchId, saleDate, subtotal, tax, total]
+      );
+      await client.query(
+        `INSERT INTO sale_line_item (tenant_id, sale_id, item_name, quantity, unit_price, line_subtotal, gst_rate_percent, tax_amount, deleted_at)
+         VALUES ($1,$2,'Fixture line',1,$3,$3,$4,$5,${deleted ? 'now()' : 'NULL'})`,
+        [tenantId, id, subtotal, rate, tax]
       );
     }
 
@@ -153,6 +170,7 @@ async function seed() {
       subtotal: 1000.0,
       tax: 50.0,
       total: 1050.0,
+      rate: 5.0,
     });
     await insertSale({
       id: crypto.randomUUID(),
@@ -162,6 +180,7 @@ async function seed() {
       subtotal: 500.0,
       tax: 25.0,
       total: 525.0,
+      rate: 5.0,
     });
     // Outside the fixture period -> must be EXCLUDED.
     await insertSale({
@@ -172,6 +191,7 @@ async function seed() {
       subtotal: 999.0,
       tax: 999.0,
       total: 1998.0,
+      rate: 5.0,
     });
     // Inside the period but SOFT-DELETED -> must be EXCLUDED.
     await insertSale({
@@ -182,6 +202,7 @@ async function seed() {
       subtotal: 500.0,
       tax: 500.0,
       total: 1000.0,
+      rate: 5.0,
       deleted: true,
     });
 
@@ -194,10 +215,11 @@ async function seed() {
       subtotal: 2000.0,
       tax: 100.0,
       total: 2100.0,
+      rate: 5.0,
     });
 
     // Tenant B, inside the period -> proves cross-tenant isolation + the
-    // custom tenant.settings.tax.gstRate=12 override.
+    // tenant's own `tax_rate`=12% (no longer a `tenant.settings` override).
     await insertSale({
       id: crypto.randomUUID(),
       tenantId: TENANT_B,
@@ -206,6 +228,7 @@ async function seed() {
       subtotal: 300.0,
       tax: 15.0,
       total: 315.0,
+      rate: 12.0,
     });
 
     await client.query('COMMIT');
@@ -403,12 +426,24 @@ async function main() {
     // GET /tax/summary — computation correctness against hand-computed
     // fixture totals.
     // =====================================================================
+    // Integration Task 4, round 3: response shape is now `{rates: [...], total*}`
+    // -- one entry per distinct GST rate in force during the window. This
+    // fixture only ever has ONE rate per tenant, so `rates` has exactly one
+    // entry and `total*` equals that entry's own values; checks below use
+    // `total*` (a direct like-for-like replacement of the old single-value
+    // fields) plus an explicit `rates.length === 1` + `rates[0].gstRate`
+    // check to prove the per-rate breakdown itself is populated correctly,
+    // not just the sum.
     const summaryA1 = await getJson(`${base}/api/v1/tax/summary?${qs(BRANCH_A1)}`, adminAToken);
     check('tax/summary: branch A1 -> 200', summaryA1.status === 200, summaryA1);
-    check('tax/summary: branch A1 taxableAmount = 1500.00 (1000+500, excludes Dec + soft-deleted)', closeEnough(summaryA1.data?.taxableAmount, 1500.0), summaryA1.data);
-    check('tax/summary: branch A1 taxAmount = 75.00 (50+25)', closeEnough(summaryA1.data?.taxAmount, 75.0), summaryA1.data);
-    check('tax/summary: branch A1 saleCount = 2', summaryA1.data?.saleCount === 2, summaryA1.data);
-    check('tax/summary: branch A1 gstRate = 5.00 (tenant default, no override)', closeEnough(summaryA1.data?.gstRate, 5.0), summaryA1.data);
+    check('tax/summary: branch A1 taxableAmount = 1500.00 (1000+500, excludes Dec + soft-deleted)', closeEnough(summaryA1.data?.totalTaxableAmount, 1500.0), summaryA1.data);
+    check('tax/summary: branch A1 taxAmount = 75.00 (50+25)', closeEnough(summaryA1.data?.totalTaxAmount, 75.0), summaryA1.data);
+    check('tax/summary: branch A1 saleCount = 2', summaryA1.data?.totalSaleCount === 2, summaryA1.data);
+    check(
+      'tax/summary: branch A1 rates = one bucket at 5.00% (tenant tax_rate, no mid-period change)',
+      summaryA1.data?.rates?.length === 1 && closeEnough(summaryA1.data.rates[0]?.gstRate, 5.0),
+      summaryA1.data
+    );
     check(
       'tax/summary: response carries the CA-review disclaimer verbatim',
       summaryA1.data?.disclaimer === CA_REVIEW_DISCLAIMER,
@@ -417,23 +452,35 @@ async function main() {
     check('tax/summary: periodStart/periodEnd echoed back', summaryA1.data?.periodStart === PERIOD_START && summaryA1.data?.periodEnd === PERIOD_END, summaryA1.data);
 
     const summaryA2 = await getJson(`${base}/api/v1/tax/summary?${qs(BRANCH_A2)}`, adminAToken);
-    check('tax/summary: branch A2 taxableAmount = 2000.00', closeEnough(summaryA2.data?.taxableAmount, 2000.0), summaryA2.data);
-    check('tax/summary: branch A2 taxAmount = 100.00', closeEnough(summaryA2.data?.taxAmount, 100.0), summaryA2.data);
-    check('tax/summary: branch A2 saleCount = 1', summaryA2.data?.saleCount === 1, summaryA2.data);
+    check('tax/summary: branch A2 taxableAmount = 2000.00', closeEnough(summaryA2.data?.totalTaxableAmount, 2000.0), summaryA2.data);
+    check('tax/summary: branch A2 taxAmount = 100.00', closeEnough(summaryA2.data?.totalTaxAmount, 100.0), summaryA2.data);
+    check('tax/summary: branch A2 saleCount = 1', summaryA2.data?.totalSaleCount === 1, summaryA2.data);
 
-    // Tenant B: isolation + custom tenant.settings.tax.gstRate=12 override.
+    // Tenant B: isolation + tenant B's own tax_rate=12%.
     const summaryB1 = await getJson(`${base}/api/v1/tax/summary?${qs(BRANCH_B1)}`, adminBToken);
-    check('tax/summary: tenant B branch B1 taxableAmount = 300.00 (never sees tenant A data)', closeEnough(summaryB1.data?.taxableAmount, 300.0), summaryB1.data);
-    check('tax/summary: tenant B branch B1 taxAmount = 15.00', closeEnough(summaryB1.data?.taxAmount, 15.0), summaryB1.data);
-    check('tax/summary: tenant B custom gstRate = 12.00 (tenant.settings.tax.gstRate override)', closeEnough(summaryB1.data?.gstRate, 12.0), summaryB1.data);
+    check('tax/summary: tenant B branch B1 taxableAmount = 300.00 (never sees tenant A data)', closeEnough(summaryB1.data?.totalTaxableAmount, 300.0), summaryB1.data);
+    check('tax/summary: tenant B branch B1 taxAmount = 15.00', closeEnough(summaryB1.data?.totalTaxAmount, 15.0), summaryB1.data);
+    check(
+      'tax/summary: tenant B rate bucket = 12.00% (tenant B\'s own tax_rate row)',
+      summaryB1.data?.rates?.length === 1 && closeEnough(summaryB1.data.rates[0]?.gstRate, 12.0),
+      summaryB1.data
+    );
 
     // Empty-period branch (no sales at all in window, e.g. reuse A2's id with
-    // an out-of-fixture-range period) -> zero, not an error.
+    // an out-of-fixture-range period) -> zero, not an error, zero rate buckets.
     const emptyPeriod = await getJson(
       `${base}/api/v1/tax/summary?branchId=${BRANCH_A2}&periodStart=2030-01-01&periodEnd=2030-01-31`,
       adminAToken
     );
-    check('tax/summary: period with no sales -> 200 with zeros, not an error', emptyPeriod.status === 200 && closeEnough(emptyPeriod.data?.taxableAmount, 0) && emptyPeriod.data?.saleCount === 0, emptyPeriod.data);
+    check(
+      'tax/summary: period with no sales -> 200 with zeros, not an error',
+      emptyPeriod.status === 200 &&
+        closeEnough(emptyPeriod.data?.totalTaxableAmount, 0) &&
+        emptyPeriod.data?.totalSaleCount === 0 &&
+        Array.isArray(emptyPeriod.data?.rates) &&
+        emptyPeriod.data.rates.length === 0,
+      emptyPeriod.data
+    );
 
     // =====================================================================
     // Idempotent recompute: calling /tax/summary twice for the SAME

@@ -19,8 +19,11 @@
     "test:dashboard-finance": "node tests/dashboardFinance.pgtest.mjs",
     "test:expansion": "node tests/expansion.pgtest.mjs",
     "test:tax": "node tests/tax.pgtest.mjs",
+    "test:all": "npm run test:tenant-context && npm run test:dal && npm run test:auth && npm run test:sales && npm run test:inventory && npm run test:customers && npm run test:staff-management && npm run test:notifications && npm run test:dashboard-finance && npm run test:expansion && npm run test:tax",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "check:gst-rates": "node scripts/check-tenant-gst-rates.mjs",
+    "seed:pgtest-fixtures": "node scripts/seed-pgtest-fixtures.mjs"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -29,6 +32,7 @@
     "argon2": "^0.41.1",
     "cors": "^2.8.6",
     "csv-parse": "^7.0.1",
+    "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "exceljs": "^4.4.0",
     "express": "^4.21.0",
@@ -37,7 +41,6 @@
     "unzipper": "^0.10.14"
   },
   "devDependencies": {
-    "dotenv": "^17.4.2",
     "drizzle-kit": "^0.31.10"
   }
 }

@@ -7,13 +7,11 @@
  * (`withTenantContext(pool)(async (req, db) => ...)`), never a bare
  * `(req, res, next)` handler that reaches for `res` directly.
  *
- * SUPERSEDES the legacy in-memory `GET /api/v1/stores` mock
- * (`routes/v1/stores.js`, no longer mounted in `routes/v1/index.js`) -- every
+ * SUPERSEDES the legacy in-memory `GET /api/v1/stores` mock -- every
  * frontend branch picker that used to call `apiPaths.stores` now calls
- * `GET /api/v1/branches` instead. `routes/v1/stores.js` and
- * `services/index.js`'s `storeService` are left in place, unmounted/unused,
- * as part of Integration Task 2's broader legacy-auth retirement (see
- * `routes/v1/index.js`'s top doc comment for the full list).
+ * `GET /api/v1/branches` instead. The legacy route/service files themselves
+ * were deleted in Integration Task 3, round 3 (see `routes/v1/index.js`'s
+ * top doc comment for the full list).
  *
  * Every handler here composes with `requireSession(pool)` at the router
  * level (`routes/v1/index.js`) -- write handlers (create/update/delete)
@@ -28,6 +26,7 @@ import { isBranchAllowed } from '../middleware/sessionAuth.js';
 import { isValidUuid } from '../utils/validation.js';
 import * as branchManagementService from '../services/branchManagementService.js';
 import { logAuditEvent } from '../services/auditService.js';
+import { assertBranchLimitNotExceeded, TenantLimitExceededError } from '../services/tenantLimitsService.js';
 
 function badRequest(message, details) {
   return reply(400, { error: 'BadRequest', message, ...(details ? { details } : {}) });
@@ -35,6 +34,10 @@ function badRequest(message, details) {
 
 function notFound(message = 'Branch not found.') {
   return reply(404, { error: 'NotFound', message });
+}
+
+function conflict(message) {
+  return reply(409, { error: 'Conflict', message });
 }
 
 function clampInt(value, fallback, min, max) {
@@ -68,6 +71,16 @@ export function createBranch(pool) {
     const validation = branchManagementService.validateCreateBranchInput(req.body);
     if (!validation.ok) {
       return badRequest('Invalid branch payload.', validation.errors);
+    }
+
+    // Integration Task 3, round 3: tenant.branch_limit, enforced at the one
+    // chokepoint that creates a branch. Checked after input validation
+    // (cheap, no DB hit) but before the write.
+    try {
+      await assertBranchLimitNotExceeded(db, req.tenantId);
+    } catch (err) {
+      if (err instanceof TenantLimitExceededError) return conflict(err.message);
+      throw err;
     }
 
     const branch = await branchManagementService.createBranch(db, {
