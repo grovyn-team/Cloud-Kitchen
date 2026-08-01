@@ -19,6 +19,7 @@ import { isValidUuid, round2 } from '../utils/validation.js';
 import { sanitizeCsvCell } from './csvSanitize.js';
 import { branchExistsInTenant } from './branchAccessService.js';
 import { decrementForSaleLineItems } from './inventoryManagementService.js';
+import { resolveEffectiveGstRate, computeLineTax } from './gstRateService.js';
 
 export const PAYMENT_METHODS = ['cash', 'card', 'upi', 'netbanking', 'other', 'mixed'];
 export const PERIODS = ['day', 'week', 'month'];
@@ -38,6 +39,15 @@ function normalizePaymentMethod(value) {
  * Validate + normalize a `POST /api/v1/sales` request body. Never trusts a
  * client-sent subtotal/tax/total or a client-sent line subtotal -- those are
  * always computed server-side in `createSale()` below.
+ *
+ * Integration Task 4 (SEC-007, effective-dated GST): `taxAmount` is no
+ * longer accepted from the client at all -- a caller-supplied lump tax
+ * figure is exactly the thing this task replaces. Tax is now always
+ * computed per line from the GST rate in force on `saleDate`
+ * (`gstRateService.resolveEffectiveGstRate`), in `createSale()` below. A
+ * `taxAmount` field in the request body, if present, is silently ignored
+ * (not validated, not read) -- same "field the route never reads" posture
+ * `staffManagementService`'s PATCH takes with a `password` field.
  * @param {unknown} body
  * @returns {{ok:true, value:object}|{ok:false, errors:string[]}}
  */
@@ -53,14 +63,6 @@ export function validateManualSaleInput(body) {
   const paymentMethod = normalizePaymentMethod(b.paymentMethod);
   if (paymentMethod !== null && !PAYMENT_METHODS.includes(paymentMethod)) {
     errors.push(`paymentMethod must be one of: ${PAYMENT_METHODS.join(', ')}.`);
-  }
-
-  let taxAmount = 0;
-  if (b.taxAmount !== undefined && b.taxAmount !== null && b.taxAmount !== '') {
-    taxAmount = Number(b.taxAmount);
-    if (!Number.isFinite(taxAmount) || taxAmount < 0) {
-      errors.push('taxAmount must be a non-negative number.');
-    }
   }
 
   const rawLineItems = Array.isArray(b.lineItems) ? b.lineItems : null;
@@ -107,7 +109,7 @@ export function validateManualSaleInput(body) {
 
   if (errors.length > 0) return { ok: false, errors };
 
-  return { ok: true, value: { saleDate, paymentMethod, taxAmount, lineItems } };
+  return { ok: true, value: { saleDate, paymentMethod, lineItems } };
 }
 
 /**
@@ -119,9 +121,16 @@ export function validateManualSaleInput(body) {
  * rolls back everything the request has done so far).
  *
  * The header total is ALWAYS computed here from `lineItems`, never taken
- * from caller input -- callers only ever pass `taxAmount` (there is no GST
- * rate/line-tax model yet; Phase 6 owns that) plus the already-validated
- * line items from `validateManualSaleInput`.
+ * from caller input. Integration Task 4 (SEC-007, effective-dated GST): tax
+ * is computed PER LINE, at the GST rate in force on `saleDate`
+ * (`gstRateService.resolveEffectiveGstRate` -- one resolve call per sale,
+ * not per line, since every line in one sale shares the same `saleDate` and
+ * `tenantId`), then summed into the header's `tax_amount` -- a caller can no
+ * longer supply a lump tax figure at all (`validateManualSaleInput` no
+ * longer accepts one). A mid-period rate change is then correct by
+ * construction: each sale carries the rate that was actually in force on
+ * its own date, not whatever rate happens to be current when a period is
+ * later summarized.
  *
  * P2-05 backend addition (2026-07-30): after the line items are inserted,
  * this calls `inventoryManagementService.decrementForSaleLineItems` in the
@@ -131,13 +140,20 @@ export function validateManualSaleInput(body) {
  * (why here, not a DB trigger; why CSV-imported sales don't go through
  * this; why a decrement never blocks/fails the sale).
  */
-export async function createSale(db, { tenantId, branchId, createdByUserId, saleDate, paymentMethod, taxAmount, lineItems }) {
-  const computedLines = lineItems.map((li) => ({
-    ...li,
-    lineSubtotal: round2(li.quantity * li.unitPrice),
-  }));
+export async function createSale(db, { tenantId, branchId, createdByUserId, saleDate, paymentMethod, lineItems }) {
+  const gstRatePercent = await resolveEffectiveGstRate(db, { tenantId, saleDate });
+
+  const computedLines = lineItems.map((li) => {
+    const lineSubtotal = round2(li.quantity * li.unitPrice);
+    return {
+      ...li,
+      lineSubtotal,
+      gstRatePercent,
+      taxAmount: computeLineTax(lineSubtotal, gstRatePercent),
+    };
+  });
   const subtotalAmount = round2(computedLines.reduce((sum, l) => sum + l.lineSubtotal, 0));
-  const tax = round2(taxAmount || 0);
+  const tax = round2(computedLines.reduce((sum, l) => sum + l.taxAmount, 0));
   const totalAmount = round2(subtotalAmount + tax);
 
   const [saleRow] = await db
@@ -167,6 +183,8 @@ export async function createSale(db, { tenantId, branchId, createdByUserId, sale
         quantity: l.quantity.toFixed(3),
         unitPrice: l.unitPrice.toFixed(2),
         lineSubtotal: l.lineSubtotal.toFixed(2),
+        gstRatePercent: l.gstRatePercent.toFixed(2),
+        taxAmount: l.taxAmount.toFixed(2),
       }))
     )
     .returning();
@@ -209,6 +227,8 @@ export function serializeSaleDetail(sale) {
       quantity: li.quantity,
       unitPrice: li.unitPrice,
       lineSubtotal: li.lineSubtotal,
+      gstRatePercent: li.gstRatePercent ?? null,
+      taxAmount: li.taxAmount ?? null,
     })),
   };
 }

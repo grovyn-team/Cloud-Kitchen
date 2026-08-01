@@ -106,14 +106,14 @@ export function getSummary(pool) {
     if (!parsed.ok) return parsed.errorReply;
     const { branchId, periodStart, periodEnd } = parsed;
 
-    const row = await taxService.getOrComputePeriodSummary(db, {
+    const rows = await taxService.getOrComputePeriodSummary(db, {
       tenantId: req.tenantId,
       branchId,
       periodStart,
       periodEnd,
     });
 
-    return taxService.serializeSummary(row, { branchId, periodStart, periodEnd });
+    return taxService.serializeSummary(rows, { branchId, periodStart, periodEnd });
   });
 }
 
@@ -133,7 +133,7 @@ export function getExport(pool) {
       return badRequest(`format must be one of: ${EXPORT_FORMATS.join(', ')}.`);
     }
 
-    const row = await taxService.getOrComputePeriodSummary(db, {
+    const rows = await taxService.getOrComputePeriodSummary(db, {
       tenantId: req.tenantId,
       branchId,
       periodStart,
@@ -151,10 +151,7 @@ export function getExport(pool) {
       branchName: branch?.name ?? '',
       periodStart,
       periodEnd,
-      gstRate: row.gstRate,
-      taxableAmount: row.taxableAmount,
-      taxAmount: row.taxAmount,
-      saleCount: row.saleCount ?? 0,
+      rows,
     });
 
     const filename = `gst-summary_${branchId}_${periodStart}_to_${periodEnd}.csv`;

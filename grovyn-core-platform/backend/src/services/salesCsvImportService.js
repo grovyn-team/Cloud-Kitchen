@@ -12,7 +12,15 @@
  * group rows sharing one before insert) if a real CSV export needs it later.
  *
  * Required columns: saleDate, itemName, quantity, unitPrice.
- * Optional columns: paymentMethod, sku, taxAmount.
+ * Optional columns: paymentMethod, sku.
+ *
+ * Integration Task 4 (SEC-007, effective-dated GST): a CSV `taxAmount`
+ * column is no longer accepted -- a caller-supplied lump tax figure is
+ * exactly what this task replaces. Tax is now always computed per row from
+ * the GST rate in force on that row's `saleDate`, resolved against the
+ * tenant's rate history (`gstRateService.resolveRateFromHistory`) fetched
+ * ONCE by the caller (`routes/sales.js`) and passed in as `rateHistory` --
+ * not one DB query per row, since an import can be thousands of rows.
  *
  * Formula-injection defense (OWASP CSV injection): `itemName`/`sku` go
  * through `sanitizeCsvCell()` before ever being held in a validated row or
@@ -28,6 +36,7 @@ import { schema } from '../db/dal.js';
 import { PAYMENT_METHODS } from './saleService.js';
 import { sanitizeCsvCell } from './csvSanitize.js';
 import { isValidDateString, round2 } from '../utils/validation.js';
+import { resolveRateFromHistory, computeLineTax } from './gstRateService.js';
 
 // (b) file size limit -- also enforced independently at the multer layer
 // (`middleware/csvUpload.js`) so an oversized upload is rejected before this
@@ -95,7 +104,7 @@ export function parseSalesCsv(buffer) {
  * caller has to remember.
  * @returns {{validRows: object[], errors: {row:number, error:string}[]}}
  */
-export function validateAndBuildRows(records, { tenantId, branchId, createdByUserId }) {
+export function validateAndBuildRows(records, { tenantId, branchId, createdByUserId, rateHistory }) {
   const errors = [];
   const validRows = [];
 
@@ -126,15 +135,6 @@ export function validateAndBuildRows(records, { tenantId, branchId, createdByUse
       return;
     }
 
-    let taxAmount = 0;
-    if (record.taxAmount !== undefined && String(record.taxAmount).trim() !== '') {
-      taxAmount = Number(record.taxAmount);
-      if (!Number.isFinite(taxAmount) || taxAmount < 0) {
-        errors.push({ row: rowNum, error: 'taxAmount must be a non-negative number.' });
-        return;
-      }
-    }
-
     let paymentMethod = null;
     if (record.paymentMethod !== undefined && String(record.paymentMethod).trim() !== '') {
       const pm = String(record.paymentMethod).trim().toLowerCase();
@@ -150,6 +150,8 @@ export function validateAndBuildRows(records, { tenantId, branchId, createdByUse
     const sku = skuRaw ? sanitizeCsvCell(skuRaw) : null;
 
     const lineSubtotal = round2(quantity * unitPrice);
+    const gstRatePercent = resolveRateFromHistory(rateHistory, saleDate);
+    const taxAmount = computeLineTax(lineSubtotal, gstRatePercent);
     const totalAmount = round2(lineSubtotal + taxAmount);
     // Generated up front (not left to the DB default) so the sale header and
     // its one line item can be batch-inserted in two multi-row INSERTs
@@ -175,6 +177,8 @@ export function validateAndBuildRows(records, { tenantId, branchId, createdByUse
         quantity: quantity.toFixed(3),
         unitPrice: unitPrice.toFixed(2),
         lineSubtotal: lineSubtotal.toFixed(2),
+        gstRatePercent: gstRatePercent.toFixed(2),
+        taxAmount: taxAmount.toFixed(2),
       },
     });
   });

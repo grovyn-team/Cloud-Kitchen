@@ -713,6 +713,21 @@ export const saleLineItem = pgTable(
     unitPrice: numeric('unit_price', { precision: 12, scale: 2 }).notNull(),
     lineSubtotal: numeric('line_subtotal', { precision: 12, scale: 2 }).notNull(),
 
+    // Integration Task 4 (effective-dated GST): the GST rate IN FORCE on this
+    // line's parent sale's `sale_date` (resolved against `tax_rate` at write
+    // time) and the tax computed from it (`lineSubtotal * gstRatePercent /
+    // 100`), stored per line so a mid-period rate change produces correct
+    // period aggregates BY CONSTRUCTION -- `tax_period_summary` groups by
+    // this column instead of applying one tenant-wide rate after the fact.
+    // Nullable at the DB level (not NOT NULL) ONLY because existing rows
+    // predate this column and are backfilled by a data migration rather than
+    // forced through a 3-step add-column/backfill/set-not-null sequence;
+    // EVERY application write path (`saleService.createSale`,
+    // `salesCsvImportService`'s batch insert) always populates both columns
+    // -- see those files' doc comments.
+    gstRatePercent: numeric('gst_rate_percent', { precision: 5, scale: 2 }),
+    taxAmount: numeric('tax_amount', { precision: 12, scale: 2 }),
+
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 
     // Same D-008 shape as every other soft-delete table in this task
@@ -742,6 +757,61 @@ export const saleLineItem = pgTable(
       name: 'sale_line_item_sale_id_tenant_id_fk',
     }),
     pgPolicy('sale_line_item_tenant_isolation', {
+      for: 'all',
+      to: 'public',
+      using: tenantIsolation(table),
+      withCheck: tenantIsolation(table),
+    }),
+  ],
+).enableRLS();
+
+// ============================================================================
+// tax_rate — Integration Task 4: GST rate history, effective-dated.
+// Half-open interval per row: [effective_from, effective_to). A NULL
+// `effective_to` means "current, open-ended" -- there is at most one such row
+// per tenant at a time (enforced at the service layer: setting a new rate
+// closes the previous open row's `effective_to` to the new row's
+// `effective_from` in the same transaction, never two open rows). Tax
+// computation resolves the row where
+// `effective_from <= sale_date AND (effective_to IS NULL OR sale_date <
+// effective_to)` -- a mid-period rate change is then correct by construction
+// per sale line, not a manual reconciliation. Not soft-deleted like most
+// other tables here: a rate row is immutable historical fact once superseded
+// (its `effective_to` gets closed, but the row itself is never removed --
+// every sale ever taxed against it must remain resolvable to it forever).
+// ============================================================================
+export const taxRate = pgTable(
+  'tax_rate',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenant.id),
+    ratePercent: numeric('rate_percent', { precision: 5, scale: 2 }).notNull(),
+    effectiveFrom: date('effective_from').notNull(),
+    // NULL = open-ended (current rate). Set to the next rate's
+    // `effectiveFrom` when superseded -- never backdated past a sale that
+    // already resolved against this row.
+    effectiveTo: date('effective_to'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index('tax_rate_tenant_id_idx').on(table.tenantId),
+    // Resolving "the rate in force on date X" is a range lookup keyed by
+    // tenant + effective_from -- this composite index is what makes that a
+    // real index scan instead of a per-tenant sequential scan as rate
+    // history grows (expected to stay small per tenant, but the query runs
+    // on every single sale line write).
+    index('tax_rate_tenant_effective_from_idx').on(table.tenantId, table.effectiveFrom),
+    // At most one OPEN (effective_to IS NULL) rate per tenant at a time --
+    // the DB-level backstop for the service-layer invariant described above,
+    // same "RLS/constraint as backstop, app logic as primary enforcement"
+    // posture this codebase uses everywhere else.
+    uniqueIndex('tax_rate_tenant_open_unique_idx')
+      .on(table.tenantId)
+      .where(sql`${table.effectiveTo} IS NULL`),
+    pgPolicy('tax_rate_tenant_isolation', {
       for: 'all',
       to: 'public',
       using: tenantIsolation(table),

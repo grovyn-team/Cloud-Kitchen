@@ -32,19 +32,23 @@
  *     supply-chain exposure (any other future code path that imports
  *     `exceljs` and writes a workbook would reach it) — not resolved here,
  *     surfaced for the dedicated security review.
- *   - A second, XLSX-specific residual risk (also flagged, not solved):
- *     `.xlsx` is a ZIP container, so a maliciously crafted small-on-disk
- *     file could in principle decompress to something far larger ("zip
- *     bomb") before this module's `MAX_IMPORT_ROWS` check ever runs. The
- *     5MB compressed-file-size cap (`middleware/inventoryUpload.js`) and
- *     row-count cap below are the same defense-in-depth posture Sales' CSV
- *     import uses, but CSV has no compression-expansion vector at all —
- *     this is a strictly larger attack surface than the CSV path, worth the
- *     security reviewer's explicit attention.
+ *   - SEC-006 (Integration Task 3, closed): `.xlsx` is a ZIP container, so a
+ *     small-on-disk file can decompress to something far larger ("zip
+ *     bomb") — the row-count cap alone (`MAX_IMPORT_ROWS`) was NOT a real
+ *     bound, because it only ran AFTER `workbook.xlsx.load()` had already
+ *     fully decompressed and parsed every worksheet into memory. Fixed by
+ *     `assertSafeXlsxSize()` below: reads the zip CENTRAL DIRECTORY only
+ *     (`unzipper.Open.buffer`, never decompresses entry content) to check
+ *     every entry's declared uncompressed size and total entry count BEFORE
+ *     `workbook.xlsx.load()` ever runs. Sales' import is CSV-only (no XLSX
+ *     path exists there — `middleware/csvUpload.js`'s `fileFilter` accepts
+ *     only `.csv`), so CSV has no compression-expansion vector to fix; this
+ *     is the only XLSX upload path in the codebase.
  */
 
 import { parse } from 'csv-parse/sync';
 import ExcelJS from 'exceljs';
+import unzipper from 'unzipper';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { schema } from '../db/dal.js';
 import { sanitizeCsvCell } from './csvSanitize.js';
@@ -55,6 +59,25 @@ import { maybeCreateLowStockNotification } from './inventoryManagementService.js
 // limits even though the numbers currently match Sales').
 export const MAX_IMPORT_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
 export const MAX_IMPORT_ROWS = 10_000;
+
+// SEC-006 fix (Integration Task 3): a zip bomb is defined by its
+// DECOMPRESSED size, not its on-disk (compressed) size -- the 5MB cap above
+// bounds nothing here. A legitimate 10,000-row inventory sheet's XML content
+// is a few MB at most even with heavy formatting; 50MB is generous headroom
+// (~10x the compressed cap, comfortably above realistic compression ratios
+// for text-heavy XLSX content) while still bounding a malicious file's
+// worst-case decompressed footprint to a fixed, small multiple of the
+// compressed cap instead of unbounded gigabytes. The app and Postgres run on
+// one host (D-006) -- an uncapped decompression bomb starves both, not just
+// this request.
+export const MAX_DECOMPRESSED_BYTES = 50 * 1024 * 1024; // 50MB
+// A legitimate XLSX workbook has a small, fixed number of zip entries
+// ([Content_Types].xml, a few rels/metadata parts, one worksheet, optionally
+// sharedStrings/styles/theme). A "many tiny entries" zip bomb variant can
+// have a huge decompressed total from files that individually look small --
+// capping entry count is a second, independent guard against that shape,
+// not redundant with the byte-total cap above.
+export const MAX_ZIP_ENTRIES = 200;
 
 const REQUIRED_COLUMNS = ['name', 'unit', 'quantity'];
 
@@ -113,10 +136,52 @@ function cellToString(value) {
 }
 
 /**
+ * SEC-006 fix (Integration Task 3): reads ONLY the zip central directory
+ * (`unzipper.Open.buffer` -- parses local/central-directory headers, never
+ * calls `.buffer()`/`.stream()` on any entry) to learn every entry's
+ * DECLARED uncompressed size and total entry count, and rejects before
+ * `exceljs`'s `workbook.xlsx.load()` (which unconditionally decompresses
+ * every entry into memory, see this module's top doc comment) ever runs.
+ * This is a real bound, not a cooperative one: an attacker fully controls
+ * the header-declared size field, but zip decompression cannot exceed what
+ * the entry headers declare without corrupting the stream, so a file that
+ * lies with a SMALL declared size to slip past this check cannot actually
+ * decompress to something larger than it declared -- the attack this
+ * defends against (declare small, decompress huge) is exactly what checking
+ * the header value up front prevents.
+ * @param {Buffer} buffer
+ */
+async function assertSafeXlsxSize(buffer) {
+  let directory;
+  try {
+    directory = await unzipper.Open.buffer(buffer);
+  } catch (err) {
+    throw new InventoryImportStructureError(`Could not parse Excel file: ${err.message}`);
+  }
+
+  const entries = await directory.files;
+  if (entries.length > MAX_ZIP_ENTRIES) {
+    throw new InventoryImportFileTooLargeError(
+      `Excel file has ${entries.length} internal parts, exceeding the ${MAX_ZIP_ENTRIES}-part limit.`
+    );
+  }
+
+  const totalUncompressed = entries.reduce((sum, entry) => sum + (entry.uncompressedSize || 0), 0);
+  if (totalUncompressed > MAX_DECOMPRESSED_BYTES) {
+    throw new InventoryImportFileTooLargeError(
+      `Excel file would decompress to ${Math.ceil(totalUncompressed / (1024 * 1024))}MB, exceeding the ` +
+        `${Math.floor(MAX_DECOMPRESSED_BYTES / (1024 * 1024))}MB limit.`
+    );
+  }
+}
+
+/**
  * @param {Buffer} buffer
  * @returns {Promise<Record<string, string>[]>}
  */
 async function parseInventoryXlsx(buffer) {
+  await assertSafeXlsxSize(buffer);
+
   const workbook = new ExcelJS.Workbook();
   try {
     await workbook.xlsx.load(buffer);

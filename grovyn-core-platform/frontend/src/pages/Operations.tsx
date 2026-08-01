@@ -1,6 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '@/auth/AuthContext';
-import { InsightCard } from '@/components/InsightCard';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -27,13 +26,6 @@ const textareaClass =
 
 const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 
-interface Insight {
-  type: string;
-  message?: string;
-  storeId?: string;
-  severity?: string;
-}
-
 /** Branch picker — shared logic (STAFF is scoped to their own branch(es)), same pattern as Sales.tsx. */
 function useScopedBranches() {
   const { api, role, storeIds } = useAuth();
@@ -42,7 +34,7 @@ function useScopedBranches() {
 
   useEffect(() => {
     api
-      .get<{ data: Store[] }>(apiPaths.stores)
+      .get<{ data: Store[] }>(apiPaths.branchesList({ pageSize: 100 }))
       .then((r) => setBranches(Array.isArray(r.data?.data) ? r.data.data : []))
       .catch(() => setBranches([]))
       .finally(() => setLoading(false));
@@ -1013,54 +1005,6 @@ function InventoryUpload() {
   );
 }
 
-/* ---------------------------------------------------------------------- */
-/* Legacy AI insights — unrelated to the real inventory module (backend   */
-/* `routes/inventory.js` mock), left as-is, folded into its own tab.      */
-/* ---------------------------------------------------------------------- */
-
-function OperationsInsights() {
-  const { api } = useAuth();
-  const [invInsights, setInvInsights] = useState<Insight[]>([]);
-  const [wfInsights, setWfInsights] = useState<Insight[]>([]);
-
-  useEffect(() => {
-    Promise.all([
-      api.get<{ data: Insight[] }>(apiPaths.inventoryInsights).then((r) => r.data?.data ?? []),
-      api.get<{ data: Insight[] }>(apiPaths.workforceInsights).then((r) => r.data?.data ?? []),
-    ]).then(([inv, wf]) => {
-      setInvInsights(Array.isArray(inv) ? inv : []);
-      setWfInsights(Array.isArray(wf) ? wf : []);
-    });
-  }, [api]);
-
-  return (
-    <div className="space-y-4">
-      <InsightCard title="Inventory risks">
-        {invInsights.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No inventory insights.</p>
-        ) : (
-          <ul className="space-y-2 text-sm">
-            {invInsights.map((i, idx) => (
-              <li key={idx}>{i.message ?? i.type}</li>
-            ))}
-          </ul>
-        )}
-      </InsightCard>
-      <InsightCard title="Staff & workforce">
-        {wfInsights.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No workforce insights.</p>
-        ) : (
-          <ul className="space-y-2 text-sm">
-            {wfInsights.map((i, idx) => (
-              <li key={idx}>{i.message ?? i.type}</li>
-            ))}
-          </ul>
-        )}
-      </InsightCard>
-    </div>
-  );
-}
-
 export function Operations() {
   const [tab, setTab] = useState('items');
 
@@ -1078,7 +1022,6 @@ export function Operations() {
           <TabsTrigger value="items">Items</TabsTrigger>
           <TabsTrigger value="add">Add item</TabsTrigger>
           <TabsTrigger value="import">Import</TabsTrigger>
-          <TabsTrigger value="insights">Insights</TabsTrigger>
         </TabsList>
 
         <TabsContent value="items">
@@ -1089,9 +1032,6 @@ export function Operations() {
         </TabsContent>
         <TabsContent value="import">
           <InventoryUpload />
-        </TabsContent>
-        <TabsContent value="insights">
-          <OperationsInsights />
         </TabsContent>
       </Tabs>
     </div>

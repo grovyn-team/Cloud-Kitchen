@@ -8,8 +8,11 @@
  *   - src/db/preContext.js (runPreContextQuery)
  *   - drizzle/0003-0005 (branch, staff_branch_access, the
  *     resolve_session_by_token_hash resolver)
- *   - src/config/index.js (mandatory SESSION_SECRET)
- *   - the AUTH_DEMO_MODE gate (P1-08)
+ *
+ * REDUCED (Integration Task 2): the legacy demo-login gate check
+ * (`AUTH_DEMO_MODE`) and the mandatory-`SESSION_SECRET`-boot-check were
+ * removed along with the legacy HMAC auth middleware and demo-login route
+ * they exclusively covered -- both are gone now, not just gated off.
  *
  * NOT part of `npm run verify` (no DB dependency there). Run explicitly:
  *
@@ -28,14 +31,13 @@
  */
 
 import assert from 'node:assert';
-import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import crypto from 'node:crypto';
 import express from 'express';
 import pg from 'pg';
 
-import { login, refresh, logout, me, demoLogin, getDemoStoreOptions } from '../src/routes/auth.js';
+import { login, refresh, logout, me } from '../src/routes/auth.js';
 import { requireSession, requireBranchAccess } from '../src/middleware/sessionAuth.js';
 import { hashPassword } from '../src/services/passwordService.js';
 import { hashToken } from '../src/services/sessionService.js';
@@ -449,31 +451,6 @@ async function runAuditLogChecks() {
 }
 
 // ---------------------------------------------------------------------------
-// Boot-time checks that need a fresh process: SESSION_SECRET is mandatory,
-// and AUTH_DEMO_MODE gates the demo routes' very existence (404 vs reachable),
-// not just their behavior.
-// ---------------------------------------------------------------------------
-function runSessionSecretBootCheck() {
-  return new Promise((resolve) => {
-    const probe = `import('../src/config/index.js').then(()=>{console.log('IMPORTED_OK');process.exit(0);}).catch(e=>{console.log('IMPORT_THREW: '+e.message);process.exit(0);});`;
-    const child = spawn(process.execPath, ['--input-type=module', '-e', probe], {
-      cwd: join(BACKEND_ROOT, 'tests'),
-      env: { ...process.env, SESSION_SECRET: '' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let out = '';
-    child.stdout.on('data', (d) => (out += d));
-    child.on('close', () => {
-      check(
-        'Boot: importing config/index.js with SESSION_SECRET unset throws',
-        out.includes('IMPORT_THREW') && out.includes('SESSION_SECRET'),
-        out.trim()
-      );
-      resolve();
-    });
-  });
-}
-
 function waitForHealth(base, maxWaitMs = 15000) {
   const start = Date.now();
   return (async function poll() {
@@ -490,56 +467,8 @@ function waitForHealth(base, maxWaitMs = 15000) {
   })();
 }
 
-function spawnRealServer(port, extraEnv) {
-  return spawn('node', ['src/server.js'], {
-    cwd: BACKEND_ROOT,
-    env: {
-      ...process.env,
-      PORT: String(port),
-      SESSION_SECRET: process.env.SESSION_SECRET || 'auth-pgtest-not-a-real-secret',
-      DATABASE_APP_URL: APP_URL,
-      ...extraEnv,
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-}
-
-async function runDemoModeGateCheck() {
-  const disabledPort = 45801;
-  const disabledProc = spawnRealServer(disabledPort, { AUTH_DEMO_MODE: 'false' });
-  try {
-    const base = `http://127.0.0.1:${disabledPort}`;
-    const up = await waitForHealth(base);
-    check('DemoGate: server with AUTH_DEMO_MODE=false boots', up, up);
-    if (up) {
-      const r = await fetch(`${base}/api/v1/auth/demo-stores`);
-      check('DemoGate: demo route is genuinely unreachable (404) when disabled', r.status === 404, r.status);
-      const r2 = await fetch(`${base}/api/v1/auth/demo-login`, { method: 'POST' });
-      check('DemoGate: demo-login route is genuinely unreachable (404) when disabled', r2.status === 404, r2.status);
-    }
-  } finally {
-    disabledProc.kill();
-  }
-
-  const enabledPort = 45802;
-  const enabledProc = spawnRealServer(enabledPort, { AUTH_DEMO_MODE: 'true' });
-  try {
-    const base = `http://127.0.0.1:${enabledPort}`;
-    const up = await waitForHealth(base);
-    check('DemoGate: server with AUTH_DEMO_MODE=true boots', up, up);
-    if (up) {
-      const r = await fetch(`${base}/api/v1/auth/demo-stores`);
-      check('DemoGate: demo route reachable (200) when explicitly enabled', r.status === 200, r.status);
-    }
-  } finally {
-    enabledProc.kill();
-  }
-}
-
 async function main() {
   await seed();
-
-  await runSessionSecretBootCheck();
 
   const pool = new pg.Pool({ connectionString: APP_URL, max: 5 });
   await withServer(pool, async (base) => {
@@ -552,7 +481,6 @@ async function main() {
   await pool.end();
 
   await runAuditLogChecks();
-  await runDemoModeGateCheck();
 
   console.log('\n--- SUMMARY ---');
   if (failures.length) {

@@ -1,14 +1,29 @@
 /**
- * Backend system verification — smoke + contract + determinism.
+ * Backend system verification — minimal DB-free boot smoke test.
  * Run from backend: npm run verify   OR   node tests/system.test.js
  * Optional: TEST_PORT=3099 to avoid conflict with a running backend (default port 3000).
  * Exit 0 = pass, 1 = fail. No test framework; plain Node ESM.
+ *
+ * REDUCED (Integration Task 2, retiring the legacy HMAC auth middleware):
+ * this suite used to exercise a whole legacy in-memory API surface
+ * (cities/stores/brands/skus/orders/store-health/aggregators/inventory/
+ * staff/finance/autopilot), authenticated via the demo-login path
+ * (`POST /api/v1/auth/demo-login`) that only that legacy middleware could
+ * verify. Both the middleware and the demo-login route that was its only
+ * token source are gone -- every route above them is unmounted, so there is
+ * no longer any DB-free way to authenticate a request at all (real
+ * `/auth/login` needs a live Postgres). What remains here is a genuine boot
+ * check (server starts, health endpoint responds) plus a check that a
+ * protected route correctly 401s with no token, without ever touching a
+ * database. Real endpoint coverage for every DB-backed module now lives
+ * entirely in `backend/tests/*.pgtest.mjs` (each spins up a throwaway
+ * `postgres:16-alpine` container) -- this file cannot replace that
+ * coverage and does not try to.
  */
 
 import { spawn } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import assert from 'node:assert';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const BACKEND_ROOT = join(__dirname, '..');
@@ -17,9 +32,6 @@ const BASE = `http://localhost:${PORT}`;
 const HEALTH_URL = `${BASE}/api/v1/health`;
 const WAIT_MS = 30;
 const MAX_WAIT_MS = 15000;
-// Demo login credential the backend expects. Kept in sync with auth.js DEMO_PASSWORD
-// (override via AUTH_DEMO_PASSWORD once the backend reads it from env).
-const DEMO_PASSWORD = process.env.AUTH_DEMO_PASSWORD || 'grovyn@123';
 
 let serverProcess = null;
 const failures = [];
@@ -53,21 +65,12 @@ function startServer() {
       env: {
         ...process.env,
         PORT: String(PORT),
-        // This suite is DB-free by design (P1-01/02/03's note: "must keep
-        // passing without Postgres available") and only exercises the
-        // demo/seed login path (P1-08), never real DB-backed auth. P1-04
-        // wired `src/db/pool.js` (which throws at import if unset) and
-        // `SESSION_SECRET` (which now fails config import if unset) into the
-        // module graph `src/app.js` always loads, so both need a
-        // syntactically valid value for the process to boot at all --
-        // `pg.Pool` only opens a real connection lazily, on first query,
-        // which this suite never triggers. AUTH_DEMO_MODE=true is what
-        // mounts the demo login route this suite actually calls (P1-04
-        // moved it off the now-real `/auth/login`; see the `demo-login`
-        // calls below).
-        SESSION_SECRET: process.env.SESSION_SECRET || 'verify-suite-not-a-real-secret',
+        // `src/db/pool.js` throws at import time if this is unset (P1-04
+        // wired it into the module graph `src/app.js` always loads) -- the
+        // connection itself is opened lazily on first query, which this
+        // DB-free suite never triggers, so a syntactically valid URL is
+        // enough to boot.
         DATABASE_APP_URL: process.env.DATABASE_APP_URL || 'postgresql://unused:unused@localhost:5432/unused',
-        AUTH_DEMO_MODE: 'true',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
@@ -76,8 +79,6 @@ function startServer() {
     serverProcess.on('error', reject);
     const check = async () => {
       if (await waitForHealth()) return resolve();
-      // waitForHealth already polled for MAX_WAIT_MS. If we're still not healthy,
-      // fail loudly instead of retrying forever (e.g. a port conflict would otherwise hang).
       reject(new Error('Server did not become healthy in time: ' + (stderr.slice(-500) || '(no stderr)')));
     };
     setTimeout(check, 500);
@@ -91,10 +92,8 @@ function stopServer() {
   }
 }
 
-async function get(url, token = null) {
-  const headers = {};
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  const r = await fetch(url, { headers });
+async function get(url) {
+  const r = await fetch(url);
   const text = await r.text();
   let body;
   try {
@@ -105,250 +104,24 @@ async function get(url, token = null) {
   return { status: r.status, data: body };
 }
 
-async function post(url, body) {
-  const r = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const text = await r.text();
-  let data;
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    throw new Error(`Invalid JSON from ${url}: ${text.slice(0, 200)}`);
-  }
-  return { status: r.status, data };
-}
-
-// --- M1: Health & Core APIs ---
-async function testHealthAndCore(token) {
+async function testHealth() {
   const { status, data } = await get(HEALTH_URL);
   assertOk(status === 200, HEALTH_URL, `expected 200 got ${status}`);
   assertOk(data.status === 'ok', '/api/v1/health', 'status === "ok"');
   assertOk(data.service != null, '/api/v1/health', 'service exists');
   assertOk(data.timestamp != null, '/api/v1/health', 'timestamp exists');
   assertOk(data.version != null, '/api/v1/health', 'version exists');
-
-  // `/api/v1/customers` removed from this list (P3 backend, 2026-07-30): the
-  // legacy in-memory mock this smoke test exercised is no longer mounted at
-  // that path -- `GET /api/v1/customers` is now the real DB-backed Customers
-  // module (`routes/customers.js`), which requires `requireSession` + a live
-  // Postgres connection and therefore cannot be smoke-tested here, same as
-  // `/api/v1/sales`/`/api/v1/inventory/items` (the other real DB-backed
-  // modules) were never added to this no-DB list either -- see
-  // `backend/tests/{sales,inventory,customers}.pgtest.mjs` for the real,
-  // DB-backed verification of this module instead.
-  const coreEndpoints = [
-    '/api/v1/cities',
-    '/api/v1/stores',
-    '/api/v1/brands',
-    '/api/v1/skus',
-    '/api/v1/orders',
-  ];
-  for (const path of coreEndpoints) {
-    const { status: s, data: d } = await get(BASE + path, token);
-    assertOk(s === 200, path, `expected 200 got ${s}`);
-    assertOk(Array.isArray(d.data), path, 'data is an array');
-    assertOk(d.meta && d.meta.count === d.data.length, path, 'meta.count === data.length');
-    assertOk(d.data.length > 0, path, 'data.length > 0');
-  }
 }
 
-// --- M2: Store health ---
-async function testStoreHealth(storeCount, token) {
-  const { status, data } = await get(`${BASE}/api/v1/store-health`, token);
-  assertOk(status === 200, '/api/v1/store-health', `expected 200 got ${status}`);
-  assertOk(Array.isArray(data.data), '/api/v1/store-health', 'data is array');
-  assertOk(data.data.length === storeCount, '/api/v1/store-health', `data.length === ${storeCount} (stores)`);
-  const validStatus = new Set(['healthy', 'at_risk', 'critical']);
-  for (const item of data.data) {
-    assertOk(item.storeId != null, '/api/v1/store-health', 'storeId exists');
-    assertOk(item.storeName != null, '/api/v1/store-health', 'storeName exists');
-    assertOk(validStatus.has(item.status), '/api/v1/store-health', `status ∈ [healthy, at_risk, critical]`);
-    assertOk(item.signals != null && typeof item.signals === 'object', '/api/v1/store-health', 'signals object');
-    assertOk(typeof item.lastEvaluatedAt === 'string', '/api/v1/store-health', 'lastEvaluatedAt ISO string');
-  }
-  if (data.data.length > 0) {
-    const storeId = data.data[0].storeId;
-    const single = await get(`${BASE}/api/v1/stores/${storeId}/health`, token);
-    assertOk(single.status === 200, `/api/v1/stores/:id/health`, '200');
-    assertOk(single.data.storeId === storeId, '/api/v1/stores/:id/health', 'single store returned');
-    assertOk(single.data.status === data.data[0].status, '/api/v1/stores/:id/health', 'status matches list');
-  }
-}
-
-// --- M3: Orders & Aggregators ---
-async function testOrdersAndAggregators(token) {
-  const { status, data } = await get(`${BASE}/api/v1/orders`, token);
-  assertOk(status === 200, '/api/v1/orders', `expected 200 got ${status}`);
-  assertOk(data.data.length === 5000, '/api/v1/orders', 'data.length === 5000');
-  const channels = new Set(['AGGREGATOR', 'DIRECT']);
-  for (const o of data.data) {
-    assertOk(channels.has(o.channel), '/api/v1/orders', 'channel ∈ [AGGREGATOR, DIRECT]');
-    assertOk(typeof o.commissionAmount === 'number', '/api/v1/orders', 'commissionAmount exists');
-    if (o.channel === 'DIRECT') assertOk(o.aggregatorId == null, '/api/v1/orders', 'aggregatorId null for DIRECT');
-  }
-
-  const agg = await get(`${BASE}/api/v1/aggregators`, token);
-  assertOk(agg.status === 200, '/api/v1/aggregators', '200');
-  assertOk(agg.data.data.length === 3, '/api/v1/aggregators', 'exactly 3 rows');
-  const ids = agg.data.data.map((r) => r.aggregatorId).sort();
-  assertOk(
-    ids[0] === 'AGGREGATOR_A' && ids[1] === 'AGGREGATOR_B' && ids[2] === 'DIRECT',
-    '/api/v1/aggregators',
-    'AGGREGATOR_A, AGGREGATOR_B, DIRECT'
-  );
-  const sumOrders = agg.data.data.reduce((s, r) => s + r.totalOrders, 0);
-  assertOk(sumOrders === 5000, '/api/v1/aggregators', 'totalOrders sum === 5000');
-  const direct = agg.data.data.find((r) => r.aggregatorId === 'DIRECT');
-  assertOk(direct && direct.totalCommissionPaid === 0, '/api/v1/aggregators', 'commission for DIRECT === 0');
-
-  const insights = await get(`${BASE}/api/v1/aggregator-insights`, token);
-  assertOk(Array.isArray(insights.data.data), '/api/v1/aggregator-insights', 'data is array');
-  for (const i of insights.data.data) {
-    assertOk(i.type != null && i.message != null && i.severity != null && i.evaluatedAt != null,
-      '/api/v1/aggregator-insights', 'insight shape valid');
-  }
-}
-
-// --- M4: Inventory ---
-async function testInventory(storeCount, token) {
-  const { status, data } = await get(`${BASE}/api/v1/inventory`, token);
-  assertOk(status === 200, '/api/v1/inventory', '200');
-  assertOk(data.data.length === storeCount, '/api/v1/inventory', `data.length === ${storeCount}`);
-  for (const store of data.data) {
-    assertOk(Array.isArray(store.ingredients), '/api/v1/inventory', 'ingredients array');
-    for (const ing of store.ingredients) {
-      assertOk(ing.currentStock >= 0, '/api/v1/inventory', 'currentStock >= 0');
-      assertOk(ing.daysRemaining == null || ing.daysRemaining >= 0, '/api/v1/inventory', 'daysRemaining >= 0');
-    }
-  }
-  const invInsights = await get(`${BASE}/api/v1/inventory-insights`, token);
-  const validTypes = new Set(['LOW_STOCK', 'OVERSTOCK', 'WASTE_RISK']);
-  for (const i of invInsights.data.data) {
-    assertOk(validTypes.has(i.type), '/api/v1/inventory-insights', `type ∈ [LOW_STOCK, OVERSTOCK, WASTE_RISK]`);
-  }
-}
-
-// --- M5: Staff & Workforce ---
-async function testStaffAndWorkforce(token) {
-  const { status, data } = await get(`${BASE}/api/v1/staff`, token);
-  assertOk(status === 200, '/api/v1/staff', '200');
-  for (const store of data.data) {
-    const n = store.staff.length;
-    assertOk(n >= 6 && n <= 10, '/api/v1/staff', 'each store has 6–10 staff');
-    for (const s of store.staff) {
-      assertOk(['CHEF', 'PACKER', 'SUPERVISOR'].includes(s.role), '/api/v1/staff', 'role valid');
-      assertOk(typeof s.hourlyCapacityScore === 'number', '/api/v1/staff', 'capacity score exists');
-    }
-  }
-  const wf = await get(`${BASE}/api/v1/workforce-insights`, token);
-  const wfTypes = new Set(['STAFF_SHORTAGE', 'OVERSTAFFING', 'PRODUCTIVITY_RISK']);
-  for (const i of wf.data.data) {
-    assertOk(wfTypes.has(i.type), '/api/v1/workforce-insights', `type ∈ [STAFF_SHORTAGE, OVERSTAFFING, PRODUCTIVITY_RISK]`);
-  }
-}
-
-// --- M6: Finance ---
-// `/api/v1/finance/summary` removed from this function (Dashboard+Finance
-// aggregation backend task, 2026-07-30): the legacy in-memory mock this
-// smoke test exercised is no longer mounted at that path -- it is now the
-// real DB-backed Finance summary (`routes/financeManagement.js`), which
-// requires `requireSession` + a live Postgres connection and therefore
-// cannot be smoke-tested here via the legacy demo-login HMAC token this
-// suite uses, same reasoning `/api/v1/customers` was removed from
-// `testHealthAndCore` above for (P3 backend, 2026-07-30) -- see
-// `backend/tests/dashboardFinance.pgtest.mjs` for the real, DB-backed
-// verification of this endpoint instead.
-async function testFinance(token) {
-  for (const path of ['/api/v1/finance/stores', '/api/v1/finance/brands', '/api/v1/finance/skus']) {
-    const res = await get(BASE + path, token);
-    assertOk(res.data.data.length > 0, path, 'data not empty');
-    const first = res.data.data[0];
-    if (first.profit !== undefined) assertOk(typeof first.profit === 'number', path, 'profit is number');
-    if (first.marginPercent !== undefined) assertOk(typeof first.marginPercent === 'number', path, 'marginPercent exists');
-  }
-
-  const fi = await get(`${BASE}/api/v1/finance-insights`, token);
-  const fiTypes = new Set(['MARGIN_LEAKAGE', 'DISCOUNT_MISUSE', 'NEGATIVE_PROFIT', 'LOW_SKU_MARGIN']);
-  for (const i of fi.data.data) {
-    assertOk(fiTypes.has(i.type), '/api/v1/finance-insights', `type ∈ [MARGIN_LEAKAGE, DISCOUNT_MISUSE, NEGATIVE_PROFIT, LOW_SKU_MARGIN]`);
-  }
-}
-
-// --- M8: Autopilot ---
-async function testAutopilot(token) {
-  const statusRes = await get(`${BASE}/api/v1/autopilot/status`, token);
-  assertOk(statusRes.data.autopilotActive === true, '/api/v1/autopilot/status', 'autopilotActive === true');
-  assertOk(statusRes.data.totalInsightsConsumed > 0, '/api/v1/autopilot/status', 'totalInsightsConsumed > 0');
-
-  const briefRes = await get(`${BASE}/api/v1/autopilot/executive-brief`, token);
-  const b = briefRes.data;
-  assertOk(b.generatedAt != null, '/api/v1/autopilot/executive-brief', 'generatedAt exists');
-  assertOk(b.businessSnapshot != null, '/api/v1/autopilot/executive-brief', 'businessSnapshot exists');
-  assertOk(
-    Array.isArray(b.whatNeedsAttentionToday) && b.whatNeedsAttentionToday.length >= 3 && b.whatNeedsAttentionToday.length <= 5,
-    '/api/v1/autopilot/executive-brief',
-    'whatNeedsAttentionToday.length between 3 and 5'
-  );
-  assertOk(Array.isArray(b.suggestedActions) && b.suggestedActions.length > 0, '/api/v1/autopilot/executive-brief', 'suggestedActions.length > 0');
-
-  const alertsRes = await get(`${BASE}/api/v1/autopilot/alerts`, token);
-  assertOk(Array.isArray(alertsRes.data.data), '/api/v1/autopilot/alerts', 'data is array');
-  const severities = new Set(['info', 'warning', 'critical']);
-  for (const a of alertsRes.data.data) {
-    assertOk(severities.has(a.severity), '/api/v1/autopilot/alerts', 'severity ∈ [info, warning, critical]');
-  }
-}
-
-// --- Determinism: capture snapshot ---
-async function captureDeterminismSnapshot(token) {
-  // `/api/v1/finance/summary` no longer fetched here -- same reason it was
-  // removed from `testFinance` above (real DB-backed endpoint, incompatible
-  // with this suite's legacy demo-login token).
-  const [brief, storeHealth] = await Promise.all([
-    get(`${BASE}/api/v1/autopilot/executive-brief`, token).then((r) => r.data),
-    get(`${BASE}/api/v1/store-health`, token).then((r) => r.data),
-  ]);
-  return { brief, storeHealth };
-}
-
-const NUMERIC_TOLERANCE = 10; // allow small drift from float order of operations (e.g. sum order)
-
-function valuesMatch(a, b, tol = NUMERIC_TOLERANCE) {
-  if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) <= tol;
-  if (Number.isFinite(a) && (b == null || b === undefined)) return Math.abs(a) <= tol;
-  if (Number.isFinite(b) && (a == null || a === undefined)) return Math.abs(b) <= tol;
-  if (Array.isArray(a) && Array.isArray(b) && a.length === b.length) {
-    return a.every((x, i) => valuesMatch(x, b[i], tol));
-  }
-  if (a != null && b != null && typeof a === 'object' && typeof b === 'object' && !Array.isArray(a) && !Array.isArray(b)) {
-    const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-    for (const k of keys) {
-      if (!valuesMatch(a[k], b[k], tol)) return false;
-    }
-    return true;
-  }
-  return a === b;
-}
-
-function compareDeterminism(snap1, snap2) {
-  try {
-    assert.ok(snap1.brief?.generatedAt && snap2.brief?.generatedAt, 'executive-brief generatedAt present in both runs');
-    assert.ok(snap1.brief?.businessSnapshot != null && snap2.brief?.businessSnapshot != null, 'executive-brief businessSnapshot present in both runs');
-    assert.deepStrictEqual(
-      snap1.storeHealth.data.map((s) => ({ storeId: s.storeId, status: s.status })).sort((a, b) => a.storeId.localeCompare(b.storeId)),
-      snap2.storeHealth.data.map((s) => ({ storeId: s.storeId, status: s.status })).sort((a, b) => a.storeId.localeCompare(b.storeId)),
-      'store-health storeId+status'
-    );
-  } catch (e) {
-    fail('DETERMINISM', e.message);
-  }
+async function testProtectedRouteRejectsNoToken() {
+  // No Authorization header at all -- requireSession must 401 before it
+  // ever attempts a DB lookup, so this is legitimately DB-free.
+  const { status } = await get(`${BASE}/api/v1/branches`);
+  assertOk(status === 401, '/api/v1/branches (no token)', `expected 401 got ${status}`);
 }
 
 async function main() {
-  console.log('Starting backend system verification...');
+  console.log('Starting backend system verification (boot smoke test)...');
   console.log(`Backend root: ${BACKEND_ROOT}, port: ${PORT}`);
 
   try {
@@ -360,36 +133,12 @@ async function main() {
   }
 
   try {
-    const loginRes = await post(`${BASE}/api/v1/auth/demo-login`, { email: 'verify@test.com', password: DEMO_PASSWORD, role: 'ADMIN' });
-    assertOk(loginRes.status === 200, '/api/v1/auth/demo-login', `expected 200 got ${loginRes.status}`);
-    assertOk(loginRes.data.sessionToken, '/api/v1/auth/demo-login', 'sessionToken present');
-    const authToken = loginRes.data.sessionToken;
-
-    const storesRes = await get(`${BASE}/api/v1/stores`, authToken);
-    const storeCount = storesRes.data.data.length;
-
-    await testHealthAndCore(authToken);
-    await testStoreHealth(storeCount, authToken);
-    await testOrdersAndAggregators(authToken);
-    await testInventory(storeCount, authToken);
-    await testStaffAndWorkforce(authToken);
-    await testFinance(authToken);
-    await testAutopilot(authToken);
-
-    const snapshot1 = await captureDeterminismSnapshot(authToken);
-
-    stopServer();
-    await new Promise((r) => setTimeout(r, 1500));
-
-    await startServer();
-    const loginRes2 = await post(`${BASE}/api/v1/auth/demo-login`, { email: 'verify@test.com', password: DEMO_PASSWORD, role: 'ADMIN' });
-    const authToken2 = loginRes2.data.sessionToken;
-    const snapshot2 = await captureDeterminismSnapshot(authToken2);
-    compareDeterminism(snapshot1, snapshot2);
-
+    await testHealth();
+    await testProtectedRouteRejectsNoToken();
     stopServer();
   } catch (e) {
     fail('SYSTEM', e.message);
+    stopServer();
   }
 
   if (failures.length > 0) {
@@ -398,8 +147,7 @@ async function main() {
     process.exit(1);
   }
 
-  console.log('\n✅ Backend system verification PASSED');
-  console.log('All milestones M1–M6 + M8 are stable and frontend-ready');
+  console.log('\n✅ Backend system verification PASSED (boot + health only -- see *.pgtest.mjs for real coverage)');
   process.exit(0);
 }
 

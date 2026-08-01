@@ -332,13 +332,17 @@ export interface SaleLineItemInput {
 export interface SaleLineItem extends SaleLineItemInput {
   id: string;
   lineTotal?: number;
+  // Integration Task 4 (effective-dated GST): the rate in force on this
+  // line's parent sale's `saleDate`, and the tax computed from it. Always
+  // server-computed — never accept these from a client.
+  gstRatePercent?: number | null;
+  taxAmount?: number | null;
 }
 
 export interface SaleCreatePayload {
   branchId: string;
   saleDate: string;
   paymentMethod?: string;
-  taxAmount?: number;
   lineItems: SaleLineItemInput[];
 }
 
@@ -739,21 +743,34 @@ export interface ExpansionPlanParams {
 }
 
 /**
- * `GET /api/v1/tax/summary` (ADMIN-only) — real DB-backed GST summary for a
- * branch/period. `disclaimer` MUST be rendered prominently wherever this
- * summary is shown (D-007) — this is a compliance-positioning requirement,
- * not a footnote: the figures are prepared for CA review, not a certified
- * filing, and the UI must not imply otherwise.
+ * `GET /api/v1/tax/summary` (ADMIN-only) — real DB-backed, effective-dated
+ * GST summary for a branch/period (Integration Task 4). `rates` carries ONE
+ * ENTRY PER DISTINCT GST RATE that was actually in force on some sale line
+ * during the window (a mid-period rate change produces multiple entries,
+ * each with its own real figures) — this is what a CA reconciles against,
+ * never collapse it to just the totals. The `total*` fields are a
+ * convenience sum across all entries for an at-a-glance figure only.
+ * `disclaimer` MUST be rendered prominently wherever this summary is shown
+ * (D-007) — this is a compliance-positioning requirement, not a footnote:
+ * the figures are prepared for CA review, not a certified filing, and the
+ * UI must not imply otherwise.
  */
-export interface TaxSummary {
-  branchId: string | null;
-  periodStart: string;
-  periodEnd: string;
+export interface TaxRateBucket {
   gstRate: number;
   taxableAmount: number;
   taxAmount: number;
   saleCount: number;
   computedAt: string;
+}
+
+export interface TaxSummary {
+  branchId: string | null;
+  periodStart: string;
+  periodEnd: string;
+  rates: TaxRateBucket[];
+  totalTaxableAmount: number;
+  totalTaxAmount: number;
+  totalSaleCount: number;
   disclaimer: string;
 }
 

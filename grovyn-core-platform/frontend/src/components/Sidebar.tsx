@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Store, DollarSign, AlertCircle, ChefHat, Users, TrendingUp, Receipt, UserCog, Percent } from 'lucide-react';
+import { LayoutDashboard, Building2, DollarSign, AlertCircle, ChefHat, Users, TrendingUp, Receipt, UserCog, Percent } from 'lucide-react';
 import type { Role } from '@/types/api';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/auth/AuthContext';
@@ -15,7 +15,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { to: '/', label: 'Dashboard', icon: <LayoutDashboard className="h-5 w-5" />, roles: ['ADMIN', 'STAFF'] },
-  { to: '/stores', label: 'Stores', icon: <Store className="h-5 w-5" />, roles: ['ADMIN', 'STAFF'] },
+  { to: '/branches', label: 'Branches', icon: <Building2 className="h-5 w-5" />, roles: ['ADMIN', 'STAFF'] },
   { to: '/sales', label: 'Sales', icon: <Receipt className="h-5 w-5" />, roles: ['ADMIN', 'STAFF'] },
   { to: '/operations', label: 'Operations', icon: <ChefHat className="h-5 w-5" />, roles: ['ADMIN', 'STAFF'] },
   { to: '/finance', label: 'Finance', icon: <DollarSign className="h-5 w-5" />, roles: ['ADMIN'] },

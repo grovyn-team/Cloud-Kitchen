@@ -4,8 +4,7 @@ import { Layout } from '@/components/Layout';
 import { RequireRole } from '@/auth/RequireRole';
 import { Login } from '@/pages/Login';
 import { Dashboard } from '@/pages/Dashboard';
-import { Stores } from '@/pages/Stores';
-import { StoreDetail } from '@/pages/StoreDetail';
+import { Branches } from '@/pages/Branches';
 import { Operations } from '@/pages/Operations';
 import { Finance } from '@/pages/Finance';
 import { Tax } from '@/pages/Tax';
@@ -31,12 +30,8 @@ const routes: RouteObject[] = [
     children: [
       { index: true, element: <Dashboard /> },
       {
-        path: 'stores',
-        element: <RequireRole roles={['ADMIN', 'STAFF']}><Stores /></RequireRole>,
-      },
-      {
-        path: 'stores/:id',
-        element: <RequireRole roles={['ADMIN', 'STAFF']}><StoreDetail /></RequireRole>,
+        path: 'branches',
+        element: <RequireRole roles={['ADMIN', 'STAFF']}><Branches /></RequireRole>,
       },
       {
         path: 'operations',

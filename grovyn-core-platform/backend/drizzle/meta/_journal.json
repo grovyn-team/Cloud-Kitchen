@@ -92,6 +92,20 @@
       "when": 1785436749857,
       "tag": "0012_tax_period_summary_branch_composite_fk",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1785597287561,
+      "tag": "0013_cultured_flatman",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1785597300000,
+      "tag": "0014_force_rls_grants_and_backfill_tax_rate",
+      "breakpoints": true
     }
   ]
 }

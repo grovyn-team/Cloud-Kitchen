@@ -34,6 +34,7 @@ import {
   CsvRowLimitError,
 } from '../services/salesCsvImportService.js';
 import { logAuditEvent } from '../services/auditService.js';
+import { fetchTenantGstRateHistory } from '../services/gstRateService.js';
 
 function badRequest(message, details) {
   return reply(400, { error: 'BadRequest', message, ...(details ? { details } : {}) });
@@ -143,10 +144,12 @@ export function importSales(pool) {
       throw err;
     }
 
+    const rateHistory = await fetchTenantGstRateHistory(db, req.tenantId);
     const { validRows, errors } = validateAndBuildRows(records, {
       tenantId: req.tenantId,
       branchId,
       createdByUserId: req.userId,
+      rateHistory,
     });
 
     // All-or-nothing: any row error means zero rows are committed. Nothing

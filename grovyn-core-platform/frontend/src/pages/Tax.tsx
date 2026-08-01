@@ -44,7 +44,7 @@ export function Tax() {
   useEffect(() => {
     if (!isAdmin) return;
     api
-      .get<{ data: Store[] }>(apiPaths.stores)
+      .get<{ data: Store[] }>(apiPaths.branchesList({ pageSize: 100 }))
       .then((r) => setBranches(Array.isArray(r.data?.data) ? r.data.data : []))
       .catch(() => setBranches([]));
   }, [api, isAdmin]);
@@ -199,7 +199,7 @@ export function Tax() {
         <div className="rounded-2xl border border-border bg-card p-8 text-center shadow-card">
           <p className="text-muted-foreground">No tax data available for this range.</p>
         </div>
-      ) : summary.saleCount === 0 ? (
+      ) : summary.totalSaleCount === 0 ? (
         <div className="rounded-2xl border border-border bg-card p-8 text-center shadow-card">
           <p className="text-muted-foreground">
             No sales recorded for {branchId ? branchNameById[branchId] ?? 'this branch' : 'any branch'} between{' '}
@@ -207,27 +207,54 @@ export function Tax() {
           </p>
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <MetricCard
-            title="Taxable amount"
-            value={`₹${Number(summary.taxableAmount).toLocaleString()}`}
-            subtitle={`${summary.periodStart} to ${summary.periodEnd}`}
-          />
-          <MetricCard
-            title="Tax amount (GST)"
-            value={`₹${Number(summary.taxAmount).toLocaleString()}`}
-            subtitle={`at ${summary.gstRate}% GST rate`}
-          />
-          <MetricCard
-            title="Sales counted"
-            value={summary.saleCount.toLocaleString()}
-            subtitle={branchId ? branchNameById[branchId] ?? 'Selected branch' : 'All branches'}
-          />
-          <MetricCard
-            title="GST rate"
-            value={`${summary.gstRate}%`}
-            subtitle={`Computed ${new Date(summary.computedAt).toLocaleString()}`}
-          />
+        <div className="space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <MetricCard
+              title="Taxable amount"
+              value={`₹${Number(summary.totalTaxableAmount).toLocaleString()}`}
+              subtitle={`${summary.periodStart} to ${summary.periodEnd}`}
+            />
+            <MetricCard
+              title="Tax amount (GST)"
+              value={`₹${Number(summary.totalTaxAmount).toLocaleString()}`}
+              subtitle={
+                summary.rates.length > 1
+                  ? `across ${summary.rates.length} GST rates in this period`
+                  : `at ${summary.rates[0]?.gstRate ?? 0}% GST rate`
+              }
+            />
+            <MetricCard
+              title="Sales counted"
+              value={summary.totalSaleCount.toLocaleString()}
+              subtitle={branchId ? branchNameById[branchId] ?? 'Selected branch' : 'All branches'}
+            />
+          </div>
+
+          {/* One row per distinct GST rate actually in force during this window
+              — a mid-period rate change shows as multiple rows, by design
+              (Integration Task 4): never collapsed into one blended figure. */}
+          <div className="overflow-x-auto rounded-xl border border-border">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/40 text-left text-muted-foreground">
+                  <th className="px-4 py-2 font-medium">GST rate</th>
+                  <th className="px-4 py-2 font-medium">Taxable amount</th>
+                  <th className="px-4 py-2 font-medium">Tax amount</th>
+                  <th className="px-4 py-2 font-medium">Sales</th>
+                </tr>
+              </thead>
+              <tbody>
+                {summary.rates.map((r) => (
+                  <tr key={r.gstRate} className="border-b border-border/60">
+                    <td className="px-4 py-2.5 font-medium text-foreground">{r.gstRate}%</td>
+                    <td className="px-4 py-2.5">₹{Number(r.taxableAmount).toLocaleString()}</td>
+                    <td className="px-4 py-2.5">₹{Number(r.taxAmount).toLocaleString()}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground">{r.saleCount.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

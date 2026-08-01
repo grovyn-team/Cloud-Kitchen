@@ -67,7 +67,7 @@ export function Alerts() {
   useEffect(() => {
     if (role !== 'ADMIN') return;
     api
-      .get<{ data: Store[] }>(apiPaths.stores)
+      .get<{ data: Store[] }>(apiPaths.branchesList({ pageSize: 100 }))
       .then((r) => setStores(Array.isArray(r.data?.data) ? r.data.data : []))
       .catch(() => setStores([]));
   }, [api, role]);

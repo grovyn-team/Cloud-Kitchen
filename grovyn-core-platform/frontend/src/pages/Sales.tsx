@@ -30,7 +30,7 @@ function useScopedBranches() {
 
   useEffect(() => {
     api
-      .get<{ data: Store[] }>(apiPaths.stores)
+      .get<{ data: Store[] }>(apiPaths.branchesList({ pageSize: 100 }))
       .then((r) => setBranches(Array.isArray(r.data?.data) ? r.data.data : []))
       .catch(() => setBranches([]))
       .finally(() => setLoading(false));
@@ -156,8 +156,9 @@ function SalesUpload() {
         <CardTitle className="text-base">Import sales from CSV</CardTitle>
         <p className="text-sm text-muted-foreground">
           Required columns: <code className="rounded bg-muted px-1">saleDate, itemName, quantity, unitPrice</code>.
-          Optional: <code className="rounded bg-muted px-1">paymentMethod, sku, taxAmount</code>. One row = one sale
-          with one line item. Max 5MB / 10,000 rows.
+          Optional: <code className="rounded bg-muted px-1">paymentMethod, sku</code>. GST is computed automatically
+          at the rate in force on each row's sale date — do not include a tax column. One row = one sale with one
+          line item. Max 5MB / 10,000 rows.
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -260,7 +261,6 @@ function SalesManualEntry() {
   const [branchId, setBranchId] = useState('');
   const [saleDate, setSaleDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [paymentMethod, setPaymentMethod] = useState('');
-  const [taxAmount, setTaxAmount] = useState('');
   const [lineItems, setLineItems] = useState<DraftLineItem[]>([emptyLineItem()]);
   const [state, setState] = useState<ManualState>({ status: 'idle' });
   const [formError, setFormError] = useState<string | null>(null);
@@ -317,7 +317,6 @@ function SalesManualEntry() {
         branchId,
         saleDate,
         paymentMethod: paymentMethod || undefined,
-        taxAmount: taxAmount ? Number(taxAmount) : undefined,
         lineItems: cleanItems.map(({ itemName, sku, quantity, unitPrice, inventoryItemId }) => ({
           itemName,
           sku: sku || undefined,
@@ -329,7 +328,6 @@ function SalesManualEntry() {
       setState({ status: 'success', sale: data });
       setLineItems([emptyLineItem()]);
       setPaymentMethod('');
-      setTaxAmount('');
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { message?: string } } };
       setState({
@@ -372,20 +370,6 @@ function SalesManualEntry() {
                 onChange={(e) => setPaymentMethod(e.target.value)}
               />
             </div>
-          </div>
-
-          <div>
-            <label className="mb-1 block text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Tax amount (optional)
-            </label>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              className={`${inputClass} sm:w-48`}
-              value={taxAmount}
-              onChange={(e) => setTaxAmount(e.target.value)}
-            />
           </div>
 
           <div>

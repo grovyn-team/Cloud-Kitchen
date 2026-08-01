@@ -46,11 +46,38 @@ export function createApi(
 export const apiPaths = {
   auth: { login: '/api/v1/auth/login' },
   health: '/api/v1/health',
+  // DEAD -- kept ONLY so the orphaned, unrouted `pages/Stores.tsx`,
+  // `pages/StoreDetail.tsx`, `pages/Store.tsx` still compile (Integration
+  // Task 2 unmounted every backend route these call: `/stores`,
+  // `/store-health`, `/stores/:id/health`, `/inventory-insights`,
+  // `/workforce-insights`, `/finance/stores`, `/finance-insights`,
+  // `/autopilot/alerts` — see `routes/v1/index.js`'s top doc comment. Every
+  // real branch picker in the app uses `branches`/`branchesList` below
+  // instead. Deleting these 3 unrouted files (recommended — they are 100%
+  // superseded by the real `Branches` page) would let this whole block be
+  // removed too; deleting frontend page files was outside this pass's
+  // explicit scope, so it's flagged for a decision instead of done here.
   stores: '/api/v1/stores',
   storeHealth: '/api/v1/store-health',
   storeHealthById: (id: string) => `/api/v1/stores/${id}/health`,
-  executiveBrief: '/api/v1/autopilot/executive-brief',
   alerts: '/api/v1/autopilot/alerts',
+  inventoryInsights: '/api/v1/inventory-insights',
+  workforceInsights: '/api/v1/workforce-insights',
+  financeStores: '/api/v1/finance/stores',
+  financeInsights: '/api/v1/finance-insights',
+  // Real DB-backed branch management (P1-06, Integration Task 1). ADMIN gets
+  // full CRUD; STAFF list/detail is scoped server-side to their assigned
+  // branches. Supersedes the legacy `/api/v1/stores` mock -- every branch
+  // picker in the app now calls `branchesList` (a generous pageSize so a
+  // picker dropdown gets every branch in one call, not a paginated slice).
+  branches: '/api/v1/branches',
+  branchById: (id: string) => `/api/v1/branches/${id}`,
+  branchesList: (params: { page?: number; pageSize?: number } = {}) => {
+    const q = new URLSearchParams();
+    q.set('page', String(params.page ?? 1));
+    q.set('pageSize', String(params.pageSize ?? 100));
+    return `/api/v1/branches?${q.toString()}`;
+  },
   // Real DB-backed dashboard aggregation (P2-03/P2-04/P2-06). `summary` is
   // reachable by ADMIN or STAFF — the response SHAPE differs by role (STAFF
   // never gets `revenue`/`aov` keys at all, see `types/api.ts`'s
@@ -69,27 +96,6 @@ export const apiPaths = {
     branchId
       ? `/api/v1/finance/summary?period=${period}&branchId=${branchId}`
       : `/api/v1/finance/summary?period=${period}`,
-  financeStores: '/api/v1/finance/stores',
-  financeBrands: '/api/v1/finance/brands',
-  financeSkus: '/api/v1/finance/skus',
-  financeInsights: '/api/v1/finance-insights',
-  inventory: '/api/v1/inventory',
-  inventoryInsights: '/api/v1/inventory-insights',
-  staff: '/api/v1/staff',
-  workforceInsights: '/api/v1/workforce-insights',
-  dashboard: '/api/v1/dashboard',
-  metrics: '/api/v1/metrics',
-  insights: '/api/v1/insights',
-  actions: '/api/v1/actions',
-  simulate: (stores: number) => `/api/v1/simulate?stores=${stores}`,
-  // Legacy in-memory-mock endpoint (`routes/intelligence.js`'s old HMAC-auth
-  // route) — left mounted/untouched. Superseded on the Scale Simulator page
-  // by `expansionPlan` below (P35-01/P35-02); kept here only in case some
-  // other unmigrated caller still references it.
-  expansionSimulate: (scenario?: string, newStores?: number) =>
-    scenario
-      ? `/api/v1/expansion/simulate?scenario=${scenario}${newStores != null ? `&newStores=${newStores}` : ''}`
-      : '/api/v1/expansion/simulate',
   // Real DB-backed expansion plan (P35-01/P35-02), ADMIN-only. See
   // `ExpansionPlanResponse`/`ExpansionPlanParams` in `types/api.ts` for the
   // response shape and the accepted override params respectively.
@@ -112,8 +118,6 @@ export const apiPaths = {
     const qs = q.toString();
     return qs ? `/api/v1/expansion/plan?${qs}` : '/api/v1/expansion/plan';
   },
-  customersSegments: '/api/v1/customers/segments',
-  skusMarginAnalysis: '/api/v1/skus/margin-analysis',
   sales: '/api/v1/sales',
   salesImport: '/api/v1/sales/import',
   salesRollup: (period: 'day' | 'week' | 'month', branchId?: string) =>

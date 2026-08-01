@@ -14,39 +14,32 @@
  * against the session GUC, it does not populate it (same reasoning as
  * every other service in this codebase).
  *
- * GST RATE MODELING -- READ BEFORE CHANGING (documented simplification, per
- * this task's explicit instruction to check the schema first rather than
- * invent a multi-rate system the data doesn't support):
- *   `sale`/`sale_line_item` (see `../db/schema.js`) carry ONE `tax_amount`
- *   per sale header, computed at write time (`saleService.createSale`) from a
- *   caller-supplied lump `taxAmount` -- there is NO per-line-item GST rate
- *   field anywhere in the schema (`sale_line_item` has no `gst_rate`/
- *   `hsn_code` column). So this module CANNOT bucket a period's sales into
- *   multiple real GST slabs (5%/12%/18%/28%) the way `tax_period_summary`'s
- *   `gst_rate` column shape would structurally allow -- the data to do that
- *   doesn't exist yet. Building a fake multi-rate breakdown by guessing which
- *   line belongs to which slab would fabricate figures a CA could not trust,
- *   which is exactly what D-007 forbids.
+ * GST RATE MODELING -- Integration Task 4 (SEC-007), effective-dated:
+ *   `sale_line_item` now carries `gst_rate_percent`/`tax_amount` PER LINE,
+ *   resolved at write time (`saleService.createSale`/`salesCsvImportService`)
+ *   against the `tax_rate` table's effective-dated history
+ *   (`gstRateService.js`) -- the rate that was actually in force on that
+ *   line's parent sale's `sale_date`, not whatever rate is current when a
+ *   period is later summarized. This module's aggregation below is now a
+ *   REAL `GROUP BY gst_rate_percent` over `sale_line_item` -- a mid-period
+ *   rate change produces one `tax_period_summary` row PER distinct rate that
+ *   was actually in force during the window, each with its own real
+ *   `taxableAmount`/`taxAmount`/`saleCount`, not a single blended label
+ *   applied after the fact. `tax_period_summary`'s
+ *   `(tenant_id, branch_id, period_start, period_end, gst_rate)` unique
+ *   index already supported this multi-row-per-period shape from the start
+ *   (see `../db/schema.js`'s comment on that table) -- only the population
+ *   logic needed to catch up to it, which is what this task does.
  *
- *   Instead: ONE blended/configurable rate per (tenant, branch, period) row,
- *   used only as a DESCRIPTIVE LABEL on the summary -- it is NEVER used to
- *   recompute `taxableAmount`/`taxAmount` from a formula. Those two figures
- *   are always the real, already-recorded `sale.subtotal_amount`/
- *   `sale.tax_amount` sums for the window -- the actual money a CA needs to
- *   reconcile, not a rate-derived estimate that could drift from what was
- *   really collected. `gstRate` is resolved per tenant (`tenant.settings.tax
- *   .gstRate`, same override-precedence pattern `expansionService.js`
- *   established for `tenant.settings.expansion`) falling back to
- *   `DEFAULT_GST_RATE_PERCENT` -- 5% is India's standard GST slab for
- *   standalone (non-hotel-attached) restaurant/cloud-kitchen F&B services
- *   without input tax credit, the most common bracket for Grovyn's target
- *   segment, but any tenant on a different slab can override it. If/when a
- *   real per-line GST-rate field is added to `sale_line_item` (a schema
- *   change database-administrator would own), this module's aggregation
- *   changes to a real `GROUP BY gst_rate` -- not invented here.
+ *   Superseded by this change: the old tenant-settings-level
+ *   `resolveGstRate`/`getTenantTaxSettings`/single-row-per-period model,
+ *   where `gstRate` was a DESCRIPTIVE LABEL only, never a real computation
+ *   input (see git history for that version if needed) -- `tenant.settings
+ *   .tax.gstRate` is no longer read anywhere; `gstRateService.js`'s
+ *   `tax_rate` table is the one source of truth for rates now.
  */
 
-import { eq, isNull } from 'drizzle-orm';
+import { isNull } from 'drizzle-orm';
 import { schema } from '../db/dal.js';
 import { round2 } from '../utils/validation.js';
 import { sanitizeCsvCell } from './csvSanitize.js';
@@ -54,75 +47,58 @@ import { sanitizeCsvCell } from './csvSanitize.js';
 export const CA_REVIEW_DISCLAIMER =
   'Prepared for CA review - not a certified filing. This report reconciles recorded sales data for your Chartered Accountant; it is not a GST audit, not a filing document, and contains no tax advice.';
 
-// India's standard GST slab for standalone restaurant/cloud-kitchen F&B
-// services (non-AC/non-hotel-attached, no ITC) -- see module doc above for
-// why this is a label, not a computation input, and how a tenant overrides
-// it via `tenant.settings.tax.gstRate`.
-export const DEFAULT_GST_RATE_PERCENT = 5.0;
-
 /**
- * Reads THIS tenant's own `settings.tax` object (RLS confines the row this
- * selects to the caller's own tenant regardless -- same pattern/rationale as
- * `expansionService.js`'s `gatherRealInputs` reading `settings.expansion`).
- * @param {*} db
- * @param {string} tenantId
- */
-async function getTenantTaxSettings(db, tenantId) {
-  const [row] = await db
-    .select({ settings: schema.tenant.settings })
-    .from(schema.tenant)
-    .where(eq(schema.tenant.id, tenantId))
-    .limit(1);
-  const settings = row?.settings && typeof row.settings === 'object' ? row.settings : {};
-  return settings.tax && typeof settings.tax === 'object' ? settings.tax : {};
-}
-
-/**
- * @param {object} taxSettings result of `getTenantTaxSettings`
- * @returns {number} a validated GST rate percent (0-100), never NaN/Infinity.
- */
-export function resolveGstRate(taxSettings) {
-  const raw = taxSettings && typeof taxSettings === 'object' ? taxSettings.gstRate : undefined;
-  const n = Number(raw);
-  if (Number.isFinite(n) && n >= 0 && n <= 100) return n;
-  return DEFAULT_GST_RATE_PERCENT;
-}
-
-/**
- * Real SQL aggregation (not an in-memory reduce), same style as
- * `saleService.getCurrentPeriodSummary`/`financeManagementService
- * .getFinanceSummary` -- runs on the already tenant-scoped `db`, so RLS
- * transparently confines this to the caller's own tenant; `branchId` is a
- * bound parameter, never string-interpolated. `periodStart`/`periodEnd` are
- * INCLUSIVE calendar-date bounds (caller-supplied, already validated by the
- * route as `YYYY-MM-DD` with `periodStart <= periodEnd`) -- this matches how
- * a CA thinks about a GST return period (e.g. "1 July - 31 July"), unlike the
- * rolling day/week/month windows Dashboard/Finance use.
+ * Real SQL aggregation (not an in-memory reduce), `GROUP BY` the rate that
+ * was actually in force on each line (`sale_line_item.gst_rate_percent`) --
+ * a period spanning a rate change returns one row PER distinct rate, each
+ * with its own real sums, not one blended figure. Runs on the already
+ * tenant-scoped `db`, so RLS transparently confines this to the caller's own
+ * tenant; `branchId` is a bound parameter, never string-interpolated.
+ * `periodStart`/`periodEnd` are INCLUSIVE calendar-date bounds (caller-
+ * supplied, already validated by the route as `YYYY-MM-DD` with
+ * `periodStart <= periodEnd`) -- this matches how a CA thinks about a GST
+ * return period (e.g. "1 July - 31 July"), unlike the rolling day/week/month
+ * windows Dashboard/Finance use.
+ *
+ * `sale_line_item.line_subtotal` (not `sale.subtotal_amount`) is what's
+ * summed into `taxableAmount` per bucket -- a sale's header total spans
+ * every line, but a single sale CAN have lines taxed at different rates in
+ * principle (a future multi-HSN-code line item would); bucketing at the
+ * line level is the only way the per-rate totals are guaranteed to add up to
+ * the sale-level totals. `saleCount` per bucket is a DISTINCT count of sale
+ * ids (not line-item rows), so a sale with two lines at the same rate counts
+ * once, matching what "how many sales fell under this rate" means to a CA.
  * @param {*} db
  * @param {{branchId: string, periodStart: string, periodEnd: string}} args
+ * @returns {Promise<{gstRate:number, taxableAmount:number, taxAmount:number, saleCount:number}[]>}
  */
 export async function computeGstFromSales(db, { branchId, periodStart, periodEnd }) {
   const result = await db.raw(
     `
       SELECT
-        COUNT(*)::int AS "saleCount",
-        COALESCE(SUM(subtotal_amount), 0)::numeric(14,2) AS "taxableAmount",
-        COALESCE(SUM(tax_amount), 0)::numeric(14,2) AS "taxAmount"
-      FROM sale
-      WHERE deleted_at IS NULL
-        AND branch_id = $1
-        AND sale_date >= $2
-        AND sale_date <= $3
+        sli.gst_rate_percent AS "gstRate",
+        COUNT(DISTINCT sli.sale_id)::int AS "saleCount",
+        COALESCE(SUM(sli.line_subtotal), 0)::numeric(14,2) AS "taxableAmount",
+        COALESCE(SUM(sli.tax_amount), 0)::numeric(14,2) AS "taxAmount"
+      FROM sale_line_item sli
+      JOIN sale s ON s.id = sli.sale_id
+      WHERE sli.deleted_at IS NULL
+        AND s.deleted_at IS NULL
+        AND s.branch_id = $1
+        AND s.sale_date >= $2
+        AND s.sale_date <= $3
+      GROUP BY sli.gst_rate_percent
+      ORDER BY sli.gst_rate_percent
     `,
     [branchId, periodStart, periodEnd]
   );
 
-  const row = result.rows[0] || {};
-  return {
+  return result.rows.map((row) => ({
+    gstRate: Number(row.gstRate),
     saleCount: Number(row.saleCount) || 0,
     taxableAmount: round2(Number(row.taxableAmount) || 0),
     taxAmount: round2(Number(row.taxAmount) || 0),
-  };
+  }));
 }
 
 /**
@@ -185,51 +161,63 @@ export async function upsertPeriodSummary(
 }
 
 /**
- * Compute-on-demand + cache: always recomputes from live `sale` data (so the
- * number is always current/correct, never stale -- documented choice, see
- * `routes/tax.js`'s own doc comment for why this beats reading a possibly-
- * stale persisted row), then upserts the result into `tax_period_summary` so
- * a persisted, exportable/auditable row always exists for the period. This
- * is what makes repeated calls to `GET /tax/summary` for the same window
- * idempotent (no duplicate `tax_period_summary` rows) while still always
- * reflecting the latest sale data.
+ * Compute-on-demand + cache: always recomputes from live `sale_line_item`
+ * data (so the numbers are always current/correct, never stale -- documented
+ * choice, see `routes/tax.js`'s own doc comment for why this beats reading a
+ * possibly-stale persisted row), then upserts ONE `tax_period_summary` row
+ * PER distinct rate bucket `computeGstFromSales` returns -- a period with a
+ * mid-window rate change produces multiple persisted rows, one per rate,
+ * each independently idempotent (repeated calls update the same rows, never
+ * duplicate them, same as the single-bucket case always was).
  * @param {*} db
  * @param {{tenantId:string, branchId:string, periodStart:string, periodEnd:string}} args
+ * @returns {Promise<object[]>} one persisted `tax_period_summary` row per rate bucket (possibly empty).
  */
 export async function getOrComputePeriodSummary(db, { tenantId, branchId, periodStart, periodEnd }) {
-  const taxSettings = await getTenantTaxSettings(db, tenantId);
-  const gstRate = resolveGstRate(taxSettings);
+  const buckets = await computeGstFromSales(db, { branchId, periodStart, periodEnd });
 
-  const { saleCount, taxableAmount, taxAmount } = await computeGstFromSales(db, {
-    branchId,
-    periodStart,
-    periodEnd,
-  });
-
-  const persisted = await upsertPeriodSummary(db, {
-    tenantId,
-    branchId,
-    periodStart,
-    periodEnd,
-    gstRate,
-    taxableAmount,
-    taxAmount,
-    saleCount,
-  });
-
+  const persisted = [];
+  for (const bucket of buckets) {
+    const row = await upsertPeriodSummary(db, {
+      tenantId,
+      branchId,
+      periodStart,
+      periodEnd,
+      gstRate: bucket.gstRate,
+      taxableAmount: bucket.taxableAmount,
+      taxAmount: bucket.taxAmount,
+      saleCount: bucket.saleCount,
+    });
+    persisted.push(row);
+  }
   return persisted;
 }
 
-export function serializeSummary(row, { branchId, periodStart, periodEnd }) {
-  return {
-    branchId,
-    periodStart,
-    periodEnd,
-    gstRate: row.gstRate,
+/**
+ * `rows` is the array `getOrComputePeriodSummary` returns -- one row per
+ * distinct GST rate that was in force during the window (possibly empty, if
+ * no sales fell in it). `rates` carries every bucket individually (what a CA
+ * needs to reconcile against actual GST slabs); the `total*` fields are a
+ * convenience sum across buckets for a single at-a-glance figure -- never
+ * the ONLY figures shown, since collapsing multi-rate periods back into one
+ * blended number is exactly what this task's effective-dated model replaces.
+ */
+export function serializeSummary(rows, { branchId, periodStart, periodEnd }) {
+  const rates = rows.map((row) => ({
+    gstRate: Number(row.gstRate),
     taxableAmount: row.taxableAmount,
     taxAmount: row.taxAmount,
     saleCount: row.saleCount ?? 0,
     computedAt: row.computedAt,
+  }));
+  return {
+    branchId,
+    periodStart,
+    periodEnd,
+    rates,
+    totalTaxableAmount: round2(rates.reduce((sum, r) => sum + Number(r.taxableAmount), 0)),
+    totalTaxAmount: round2(rates.reduce((sum, r) => sum + Number(r.taxAmount), 0)),
+    totalSaleCount: rates.reduce((sum, r) => sum + r.saleCount, 0),
     disclaimer: CA_REVIEW_DISCLAIMER,
   };
 }
@@ -243,16 +231,19 @@ function escapeCsvCell(value) {
 }
 
 /**
- * Builds the CSV export body. The CA-review disclaimer (D-007, non-optional)
- * is printed as the FIRST line of the file itself (a leading comment-style
+ * Builds the CSV export body -- ONE ROW PER RATE BUCKET (`rows`, the array
+ * `getOrComputePeriodSummary` returns), not a single blended row, so a CA
+ * reconciling this against actual GST slabs sees exactly which sales fell
+ * under which rate. The CA-review disclaimer (D-007, non-optional) is
+ * printed as the FIRST line of the file itself (a leading comment-style
  * row), not only documented in the API -- it survives however the file is
  * saved/forwarded/reopened. `branchName` is passed through
  * `sanitizeCsvCell` (same formula-injection defense `saleService.js` applies
  * to free-text fields) since it's tenant-editable text that could contain a
  * leading `=`/`+`/`-`/`@`.
- * @param {{branchId:string, branchName:string, periodStart:string, periodEnd:string, gstRate:string|number, taxableAmount:string|number, taxAmount:string|number, saleCount:number}} row
+ * @param {{branchId:string, branchName:string, periodStart:string, periodEnd:string, rows: {gstRate:string|number, taxableAmount:string|number, taxAmount:string|number, saleCount:number}[]}} args
  */
-export function buildCsvExport(row) {
+export function buildCsvExport({ branchId, branchName, periodStart, periodEnd, rows }) {
   const lines = [];
   lines.push(escapeCsvCell(`# ${CA_REVIEW_DISCLAIMER}`));
   lines.push(
@@ -260,19 +251,16 @@ export function buildCsvExport(row) {
       .map(escapeCsvCell)
       .join(',')
   );
-  lines.push(
-    [
-      row.periodStart,
-      row.periodEnd,
-      row.branchId,
-      sanitizeCsvCell(row.branchName ?? ''),
-      row.gstRate,
-      row.taxableAmount,
-      row.taxAmount,
-      row.saleCount,
-    ]
-      .map(escapeCsvCell)
-      .join(',')
-  );
+  const safeBranchName = sanitizeCsvCell(branchName ?? '');
+  for (const row of rows) {
+    lines.push(
+      [periodStart, periodEnd, branchId, safeBranchName, row.gstRate, row.taxableAmount, row.taxAmount, row.saleCount]
+        .map(escapeCsvCell)
+        .join(',')
+    );
+  }
+  if (rows.length === 0) {
+    lines.push([periodStart, periodEnd, branchId, safeBranchName, 0, '0.00', '0.00', 0].map(escapeCsvCell).join(','));
+  }
   return lines.join('\r\n') + '\r\n';
 }

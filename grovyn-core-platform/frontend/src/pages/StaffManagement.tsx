@@ -27,7 +27,7 @@ function useAllBranches() {
 
   useEffect(() => {
     api
-      .get<{ data: Store[] }>(apiPaths.stores)
+      .get<{ data: Store[] }>(apiPaths.branchesList({ pageSize: 100 }))
       .then((r) => setBranches(Array.isArray(r.data?.data) ? r.data.data : []))
       .catch(() => setBranches([]))
       .finally(() => setLoading(false));
