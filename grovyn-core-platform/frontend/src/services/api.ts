@@ -33,7 +33,10 @@ export function createApi(
   instance.interceptors.response.use(
     (r) => r,
     (err) => {
-      if (err.response?.status === 401 && onUnauthorized) {
+      // Skip on the login request itself -- a wrong-password 401 shouldn't
+      // trigger a logout/backend-logout call while already logged out.
+      const isLoginRequest = err.config?.url === apiPaths.auth.login;
+      if (err.response?.status === 401 && onUnauthorized && !isLoginRequest) {
         onUnauthorized();
       }
       return Promise.reject(err);
@@ -44,7 +47,7 @@ export function createApi(
 }
 
 export const apiPaths = {
-  auth: { login: '/api/v1/auth/login', me: '/api/v1/auth/me' },
+  auth: { login: '/api/v1/auth/login', me: '/api/v1/auth/me', logout: '/api/v1/auth/logout' },
   health: '/api/v1/health',
   // Real DB-backed branch management (P1-06, Integration Task 1). ADMIN gets
   // full CRUD; STAFF list/detail is scoped server-side to their assigned

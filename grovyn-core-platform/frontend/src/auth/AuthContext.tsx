@@ -24,6 +24,7 @@ function loadStoredSession(): AuthSession | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as AuthSession;
     if (!parsed?.sessionToken || !parsed?.userId || !parsed?.role) return null;
+    if (!parsed.expiresAt || new Date(parsed.expiresAt).getTime() <= Date.now()) return null;
     return parsed;
   } catch {
     return null;
@@ -67,15 +68,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const tokenRef = useRef<string | null>(null);
   tokenRef.current = user?.sessionToken ?? null;
   const getToken = useCallback(() => tokenRef.current, []);
-  const logoutRef = useRef<() => void>(() => {
-    setUser(null);
-    saveSession(null);
-  });
-  const logout = useCallback(() => {
-    setUser(null);
-    saveSession(null);
-  }, []);
-  logoutRef.current = logout;
+  const logoutRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     saveSession(user);
@@ -84,6 +77,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     () => createApi(getToken, () => logoutRef.current()),
     []
   );
+
+  const logout = useCallback(() => {
+    const token = tokenRef.current;
+    setUser(null);
+    saveSession(null);
+    if (token) {
+      api
+        .post(apiPaths.auth.logout, undefined, { headers: { Authorization: `Bearer ${token}` } })
+        .catch(() => {});
+    }
+  }, [api]);
+  logoutRef.current = logout;
 
   const login = useCallback(
     async (payload: LoginPayload): Promise<AuthSession> => {
