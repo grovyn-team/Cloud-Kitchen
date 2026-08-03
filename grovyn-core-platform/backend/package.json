@@ -23,7 +23,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "check:gst-rates": "node scripts/check-tenant-gst-rates.mjs",
-    "seed:pgtest-fixtures": "node scripts/seed-pgtest-fixtures.mjs"
+    "seed:pgtest-fixtures": "node scripts/seed-pgtest-fixtures.mjs",
+    "seed:demo": "node scripts/seed-demo.mjs"
   },
   "engines": {
     "node": ">=18.0.0"

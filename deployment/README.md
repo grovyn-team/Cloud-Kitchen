@@ -117,6 +117,8 @@ FROM tenant WHERE slug = 'your-restaurant';
 
 Log in at the frontend with that email/password and tenant slug.
 
+**Demo data (dev/staging only):** `cd backend && ALLOW_DEMO_SEED=true npm run seed:demo -- --reset` populates a full demo tenant (3 branches, staff, inventory, 90 days of sales, customers, tax history, notifications) through the real service layer — see `backend/scripts/seed-demo.mjs`'s header comment for details and safety rules.
+
 ## 4. Health checks
 
 - Backend: `GET /api/v1/health` (also the container's own Docker
