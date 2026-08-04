@@ -991,3 +991,52 @@
 - Status: **Accepted.** No critic review — user directive, decision-critic gate suspended for
   this build phase. Customers module remains not-yet-built pending this session's Sales
   pattern-approval checkpoint.
+
+### D-017 — P1-05/06: no dedicated permission table; retroactive log for un-logged Integration Task auth/deployment work
+- Date: 2026-08-04
+- Raised by: Main session, auditing `TASK_BOARD.md` against actual code per CLAUDE.md's
+  ground-truth rule. Between 2026-08-01 and 2026-08-02 a large body of real work — "Integration
+  Task 1" through "Integration Task 6" — shipped directly via commits `93c9e03` ("Broken Legacy
+  code fixed") and `9e6899f` ("Broken Auth, frontend fixed"): the legacy HMAC `authMiddleware.js`
+  was deleted outright, every mounted route was moved onto the central `requireSession`/
+  `requireRole`/`requireBranchAccess` model, dead legacy dashboard routes/engines/services were
+  removed, real branch CRUD (P1-06) shipped, and a full Docker Compose deployment (Postgres +
+  backend + frontend + one-shot migrate + backup service) was stood up. None of this went through
+  TASK_BOARD/DECISIONS_LOG/CRITIQUES — it simply wasn't logged, not that it was done carelessly
+  (the code's own inline doc comments are thorough and the reasoning holds up under this audit).
+- Decided by: Retroactively logged by main session; the underlying technical decision (below) was
+  already made and shipped by the time this entry exists.
+- Context: Two things need recording. (1) **The technical decision**: `schema.js` (~line 429)
+  documents, in-code, a decision to NOT build a real role/permission table for P1-05/P1-06 —
+  every Phase 2/3/3.5/6 functional requirement only ever differentiates "Admin, all branches" vs.
+  "Staff, their assigned branch," so a permission table would be speculative schema with no
+  consumer. (2) **The process gap**: retiring the app's entire auth middleware and standing up
+  the real deployment path are exactly the two categories `PHASE_PLAN.md` §1.3 step 6 and
+  `CLAUDE.md` name as mandatory security-review gates, and neither has been reviewed.
+- Decision: (1) Endorse the in-code permission-table deferral as Accepted — it is well-reasoned,
+  matches this project's own "don't build speculative schema" pattern used elsewhere (D-009), and
+  is easy to reverse (additive schema change, not a migration of existing data) if a real
+  requirement appears. (2) Do NOT retroactively rubber-stamp the missing security review by
+  writing one from inside the same continuous session that would also be marking it Done —
+  dispatched a genuinely separate Agent-tool subagent run (same separation-of-duties pattern
+  D-012/CRITIQUE 013 established for the critic gate) to review the auth-middleware retirement
+  and the deployment/secrets handling before P1-05/P1-06/P1-07 read `Done` without qualification.
+- Alternatives considered: Leave TASK_BOARD rows as stale `Backlog` (rejected — actively
+  misleading, contradicts CLAUDE.md's ground-truth rule) vs. mark them silently `Done` without
+  flagging the missing gate (rejected — exactly the kind of gate-skipping CLAUDE.md prohibits).
+- Consequences / follow-ups: A real permission table remains explicit Backlog, not abandoned —
+  revisit if a future module needs finer access than role+branch. `SECURITY_REVIEWS/008` (in
+  progress, this session) is the review that actually discharges the P1-05/06/07 gate.
+- Status: **Proposed** — the permission-table deferral (item 1) needs a `decision-critic` pass
+  before it can move to Accepted per this project's own standing rule (no decision reaches
+  Accepted without one); none was run for reasons of session/tooling scope (see `[[agents-launch-directory]]`-type
+  constraint — this session cannot invoke the registered `decision-critic` subagent from the repo
+  root). Flagging honestly rather than self-certifying.
+- **Security review verdict (independent pass, same-model/differently-scoped per this entry's own
+  caveat, 2026-08-04) — `SECURITY_REVIEWS/008-integration-task-review.md`: Section A (auth/RBAC
+  retirement) CLEAR WITH FOLLOW-UPS, no Critical/High — F2 from `004-p1-04-auth.md` (legacy HMAC
+  middleware) confirmed genuinely retired; P1-05/P1-06/P1-07 may move to `Done`. Section B
+  (deployment/secrets) FOLLOW-UPS REQUIRED — one High (backups: no tested restore or offsite copy
+  despite `deployment/README.md` claiming a "proven restore") and three Mediums (`bootstrap-roles.sql`
+  not fail-closed standalone; CRITIQUE 016 §B.1 audit_log runbook still unwritten; backups
+  unencrypted at rest). P7-01/P7-02 should NOT read `Done` on this deployment work as shipped.**
